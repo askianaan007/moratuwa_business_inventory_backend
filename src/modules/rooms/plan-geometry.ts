@@ -93,38 +93,64 @@ export function deskColumn(block: { x: number; mirrored?: boolean }, desk: { x: 
 }
 
 export function computePlan(blocks: LayoutBlock[], fixtures: LayoutFixture[] = []): PlanGeometry {
-  const maxRows = Math.max(1, ...blocks.map((b) => b.rows.length));
-  const top = MARGIN + TOP_BAND + BLOCK_HEADER;
-  const contentHeight = maxRows * (DESK_H + ROW_GAP) - ROW_GAP;
-
-  const planBlocks: PlanGeometry["blocks"] = [];
-  const planRows: PlanGeometry["rows"] = [];
-  const desks: PlanDesk[] = [];
-  let cursor = MARGIN + SIDE_BAND;
-
-  // Seats are numbered from the centre aisle outwards, so blocks on the left
-  // half of the room are drawn mirrored: S1 at their right-hand end.
+  const pitch = DESK_W + SEAT_GAP;
+  const rowsHeight = (rows: number) => Math.max(1, rows) * (DESK_H + ROW_GAP) - ROW_GAP;
   const blockWidth = (block: LayoutBlock) => {
     const maxSeats = Math.max(1, ...block.rows.map((r) => r.seats.length));
     return ROW_LABEL_W + maxSeats * DESK_W + (maxSeats - 1) * SEAT_GAP;
   };
-  const roomCentre = cursor + (blocks.reduce((n, b) => n + blockWidth(b) + AISLE, 0) - AISLE) / 2;
 
+  // Instructor-only blocks stand at the front, centred over the middle aisle;
+  // the student blocks sit side by side behind them.
+  const isFront = (b: LayoutBlock) => b.rows.length > 0 && b.rows.every((r) => r.seats.every((s) => s.kind === "INSTRUCTOR" || s.kind === "NO_TABLE"));
+  const frontBlocks = blocks.filter(isFront);
+  const mainBlocks = frontBlocks.length === blocks.length ? blocks : blocks.filter((b) => !isFront(b));
+  const front = mainBlocks === blocks ? [] : frontBlocks;
+
+  const left = MARGIN + SIDE_BAND;
+  const firstTop = MARGIN + TOP_BAND + BLOCK_HEADER;
+  const frontRows = Math.max(0, ...front.map((b) => b.rows.length));
+  const mainTop = front.length ? firstTop + rowsHeight(frontRows) + ROW_GAP + BLOCK_HEADER : firstTop;
+  const mainRows = Math.max(1, ...mainBlocks.map((b) => b.rows.length));
+  const mainWidth = mainBlocks.reduce((n, b) => n + blockWidth(b) + AISLE, 0) - AISLE;
+  const frontWidth = front.reduce((n, b) => n + blockWidth(b) + AISLE, 0) - AISLE;
+  const span = Math.max(mainWidth, frontWidth, 0);
+  // Seats are numbered from the centre aisle outwards, so student blocks on the
+  // left half of the room are drawn mirrored: S1 at their right-hand end.
+  const roomCentre = left + span / 2;
+
+  const placed = new Map<string, { x: number; top: number; rows: number; mirrored: boolean }>();
+  let cursor = left + (span - mainWidth) / 2;
+  for (const block of mainBlocks) {
+    const w = blockWidth(block);
+    placed.set(block.id, { x: cursor, top: mainTop, rows: mainRows, mirrored: cursor + w / 2 < roomCentre });
+    cursor += w + AISLE;
+  }
+  // Centre the desks themselves on the aisle, not desks plus row label.
+  cursor = roomCentre - frontWidth / 2 - ROW_LABEL_W / 2;
+  for (const block of front) {
+    placed.set(block.id, { x: cursor, top: firstTop, rows: frontRows, mirrored: false });
+    cursor += blockWidth(block) + AISLE;
+  }
+
+  const planBlocks: PlanGeometry["blocks"] = [];
+  const planRows: PlanGeometry["rows"] = [];
+  const desks: PlanDesk[] = [];
   for (const block of blocks) {
+    const { x, top, rows, mirrored } = placed.get(block.id)!;
     const maxSeats = Math.max(1, ...block.rows.map((r) => r.seats.length));
     const w = blockWidth(block);
-    const mirrored = cursor + w / 2 < roomCentre;
-    planBlocks.push({ id: block.id, code: block.code, name: block.name, x: cursor, y: top - BLOCK_HEADER, w, h: contentHeight + BLOCK_HEADER, mirrored });
+    planBlocks.push({ id: block.id, code: block.code, name: block.name, x, y: top - BLOCK_HEADER, w, h: rowsHeight(rows) + BLOCK_HEADER, mirrored });
 
     block.rows.forEach((row, ri) => {
       const y = top + ri * (DESK_H + ROW_GAP);
       // Mirrored blocks carry their row labels on the right, beside S1.
-      planRows.push({ id: row.id, blockId: block.id, label: row.label, x: mirrored ? cursor + w - ROW_LABEL_W : cursor, y: y + DESK_H / 2 });
+      planRows.push({ id: row.id, blockId: block.id, label: row.label, x: mirrored ? x + w - ROW_LABEL_W : x, y: y + DESK_H / 2 });
       row.seats.forEach((seat, si) => {
         desks.push({
           seatId: seat.id,
           kind: seat.kind,
-          x: cursor + (mirrored ? (maxSeats - 1 - si) * (DESK_W + SEAT_GAP) : ROW_LABEL_W + si * (DESK_W + SEAT_GAP)),
+          x: x + (mirrored ? (maxSeats - 1 - si) * pitch : ROW_LABEL_W + si * pitch),
           y,
           w: DESK_W,
           h: DESK_H,
@@ -137,14 +163,14 @@ export function computePlan(blocks: LayoutBlock[], fixtures: LayoutFixture[] = [
         });
       });
     });
-    cursor += w + AISLE;
   }
 
-  const width = Math.max(cursor - AISLE + SIDE_BAND + MARGIN, 320);
-  const height = top + contentHeight + BOTTOM_BAND + MARGIN;
+  const contentHeight = mainTop + rowsHeight(mainRows) - firstTop;
+  const width = Math.max(left + span + SIDE_BAND + MARGIN, 320);
+  const height = firstTop + contentHeight + BOTTOM_BAND + MARGIN;
   const board = { x: MARGIN + SIDE_BAND, y: MARGIN, w: width - 2 * (MARGIN + SIDE_BAND), h: 16 };
 
-  return { width, height, board, blocks: planBlocks, rows: planRows, desks, fixtures: placeFixtures(fixtures, width, height, top, contentHeight) };
+  return { width, height, board, blocks: planBlocks, rows: planRows, desks, fixtures: placeFixtures(fixtures, width, height, firstTop, contentHeight) };
 }
 
 /** Explicit x/y (0–100 %) wins; otherwise fixtures are spread evenly along their wall. */
