@@ -16,6 +16,7 @@ import type {
 
 const entryDetailInclude = {
   department: { select: { id: true, code: true, name: true } },
+  category: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   items: {
     where: { deletedAt: null },
@@ -40,6 +41,12 @@ const entryDetailInclude = {
 const computeValue = (quantity: number, unitPrice: string | Prisma.Decimal) =>
   new Prisma.Decimal(unitPrice).times(quantity).toDecimalPlaces(2);
 
+/** Ledger entries can only be filed under an active category. */
+async function assertActiveCategory(db: Prisma.TransactionClient, categoryId: string) {
+  const category = await db.category.findFirst({ where: { id: categoryId, isActive: true } });
+  if (!category) throw AppError.badRequest("Category not found or inactive");
+}
+
 /** Loads a live entry the user is allowed to see, or throws 404. */
 async function findEntryForUser(user: AuthUser, id: string, db: Prisma.TransactionClient | typeof prisma = prisma) {
   const entry = await db.ledgerEntry.findFirst({ where: { id, deletedAt: null } });
@@ -55,6 +62,9 @@ export async function list(user: AuthUser, query: ListLedgerQuery) {
   const where: Prisma.LedgerEntryWhereInput = {
     deletedAt: null,
     ...(departmentId && { departmentId }),
+    ...(query.entryType && { entryType: query.entryType }),
+    ...(query.categoryId && { categoryId: query.categoryId }),
+    ...(query.hodSigned !== undefined && { hodSigned: query.hodSigned }),
     ...(query.bookStatus && { bookStatus: query.bookStatus }),
     ...(query.approvalStatus && { approvalStatus: query.approvalStatus }),
     ...((query.from || query.to) && {
@@ -67,6 +77,10 @@ export async function list(user: AuthUser, query: ListLedgerQuery) {
       OR: [
         { description: contains(query.q) },
         { refNo: contains(query.q) },
+        { receiptNo: contains(query.q) },
+        { sinNo: contains(query.q) },
+        { itemCode: contains(query.q) },
+        { serialNo: contains(query.q) },
         { brand: contains(query.q) },
         { modelNo: contains(query.q) },
         { items: { some: { serialNo: contains(query.q) } } },
@@ -80,7 +94,10 @@ export async function list(user: AuthUser, query: ListLedgerQuery) {
       where,
       orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }],
       ...toSkipTake(query),
-      include: { _count: { select: { items: { where: { deletedAt: null } } } } },
+      include: {
+        category: { select: { id: true, code: true, name: true } },
+        _count: { select: { items: { where: { deletedAt: null } } } },
+      },
     }),
     prisma.ledgerEntry.count({ where }),
   ]);
@@ -99,6 +116,7 @@ export async function create(user: AuthUser, input: CreateLedgerEntryInput) {
   return prisma.$transaction(async (tx) => {
     const department = await tx.department.findUnique({ where: { id: departmentId } });
     if (!department) throw AppError.notFound("Department");
+    await assertActiveCategory(tx, fields.categoryId);
 
     if (locationId) {
       const location = await tx.location.findFirst({ where: { id: locationId, departmentId, deletedAt: null } });
@@ -109,6 +127,7 @@ export async function create(user: AuthUser, input: CreateLedgerEntryInput) {
       data: {
         ...fields,
         entryDate: new Date(fields.entryDate),
+        sinDate: fields.sinDate ? new Date(fields.sinDate) : null,
         value: computeValue(fields.quantity, fields.unitPrice),
         bookStatus: fields.bookPage ? "WRITTEN_IN_BOOK" : "PENDING_BOOK",
         departmentId,
@@ -116,18 +135,21 @@ export async function create(user: AuthUser, input: CreateLedgerEntryInput) {
       },
     });
 
-    const tagCount = isBulk ? 1 : fields.quantity;
-    const tags = await allocateTagCodes(tx, department, tagCount);
-    await tx.assetItem.createMany({
-      data: tags.map((tagCode, i) => ({
-        ledgerEntryId: entry.id,
-        tagCode,
-        serialNo: serialNos[i] || null,
-        locationId: locationId ?? null,
-        isBulk,
-        bulkQty: isBulk ? fields.quantity : null,
-      })),
-    });
+    // Only receipts bring new items into stock; other rows just record the book line.
+    if (fields.entryType === "RECEIPT") {
+      const tagCount = isBulk ? 1 : fields.quantity;
+      const tags = await allocateTagCodes(tx, department, tagCount);
+      await tx.assetItem.createMany({
+        data: tags.map((tagCode, i) => ({
+          ledgerEntryId: entry.id,
+          tagCode,
+          serialNo: serialNos[i] || null,
+          locationId: locationId ?? null,
+          isBulk,
+          bulkQty: isBulk ? fields.quantity : null,
+        })),
+      });
+    }
 
     await logActivity(tx, { actorId: user.id, action: "create", tableName: "ledger_entries", rowId: entry.id, after: entry });
     return tx.ledgerEntry.findUniqueOrThrow({ where: { id: entry.id }, include: entryDetailInclude });
@@ -137,18 +159,25 @@ export async function create(user: AuthUser, input: CreateLedgerEntryInput) {
 export async function update(user: AuthUser, id: string, input: UpdateLedgerEntryInput) {
   return prisma.$transaction(async (tx) => {
     const before = await findEntryForUser(user, id, tx);
-    if (before.approvalStatus === "APPROVED" || before.approvalStatus === "SUBMITTED") {
+    // The book is often signed after approval, so the signature flag alone stays editable.
+    const onlySignature = Object.keys(input).every((key) => key === "hodSigned");
+    if (!onlySignature && (before.approvalStatus === "APPROVED" || before.approvalStatus === "SUBMITTED")) {
       throw AppError.conflict("Submitted or approved entries are locked. Ask the HOD to reject it first.");
     }
+    if (before.entryType !== "RECEIPT" && (input.receiptNo || input.sinNo || input.sinDate)) {
+      throw AppError.badRequest("Only receipts have a receipt number or SIN");
+    }
+    if (input.categoryId && input.categoryId !== before.categoryId) await assertActiveCategory(tx, input.categoryId);
 
     const after = await tx.ledgerEntry.update({
       where: { id },
       data: {
         ...input,
         ...(input.entryDate && { entryDate: new Date(input.entryDate) }),
+        ...(input.sinDate && { sinDate: new Date(input.sinDate) }),
         ...(input.unitPrice && { value: computeValue(before.quantity, input.unitPrice) }),
         // An edited, rejected entry goes back to draft.
-        ...(before.approvalStatus === "REJECTED" && { approvalStatus: "DRAFT" }),
+        ...(before.approvalStatus === "REJECTED" && !onlySignature && { approvalStatus: "DRAFT" }),
       },
     });
     await logActivity(tx, { actorId: user.id, action: "update", tableName: "ledger_entries", rowId: id, before, after });

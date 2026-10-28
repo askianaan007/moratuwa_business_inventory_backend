@@ -35,6 +35,14 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// Which section of the ledger book a row belongs to.
+enum LedgerEntryType {
+  RECEIPT
+  TRANSFER
+  DISPOSAL
+  RETURN
+}
+
 enum ItemCondition {
   GOOD
   NEEDS_REPAIR
@@ -89,12 +97,12 @@ model Location {
   building     String?
   floor        String?
 
-  department     Department     @relation(fields: [departmentId], references: [id])
-  items          AssetItem[]
-  auditSessions  AuditSession[]
-  auditRecords   AuditRecord[]  @relation("ObservedLocation")
-  movementsFrom  Movement[]     @relation("MovementFrom")
-  movementsTo    Movement[]     @relation("MovementTo")
+  department    Department     @relation(fields: [departmentId], references: [id])
+  items         AssetItem[]
+  auditSessions AuditSession[]
+  auditRecords  AuditRecord[]  @relation("ObservedLocation")
+  movementsFrom Movement[]     @relation("MovementFrom")
+  movementsTo   Movement[]     @relation("MovementTo")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -117,20 +125,37 @@ model User {
   lockedUntil      DateTime? @map("locked_until")
   lastLoginAt      DateTime? @map("last_login_at")
 
-  department      Department?    @relation(fields: [departmentId], references: [id])
-  createdEntries  LedgerEntry[]  @relation("EntryCreatedBy")
-  approvals       Approval[]
-  auditSessions   AuditSession[]
-  auditRecords    AuditRecord[]
-  movements       Movement[]
-  disposals       Disposal[]
-  activityLogs    ActivityLog[]
-  refreshTokens   RefreshToken[]
+  department     Department?    @relation(fields: [departmentId], references: [id])
+  createdEntries LedgerEntry[]  @relation("EntryCreatedBy")
+  approvals      Approval[]
+  auditSessions  AuditSession[]
+  auditRecords   AuditRecord[]
+  movements      Movement[]
+  disposals      Disposal[]
+  activityLogs   ActivityLog[]
+  refreshTokens  RefreshToken[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("users")
+}
+
+/// Item variety (Monitors, Computers, Chairs …). Managed by admins;
+/// each category has its own ledger view.
+model Category {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique // e.g. "MON"
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true) @map("is_active")
+
+  ledgerEntries LedgerEntry[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("categories")
 }
 
 /// Refresh tokens are stored hashed (SHA-256) and rotated on every use.
@@ -159,19 +184,27 @@ model RefreshToken {
 // ─── Ledger ─────────────────────────────────────────────────────────────
 
 /// One row of the physical ledger book, column for column.
+/// Receipts use receiptNo + SIN No/date; transfers, disposals and returns use refNo.
 model LedgerEntry {
-  id           String   @id @default(uuid()) @db.Uuid
-  departmentId String   @map("department_id") @db.Uuid
-  entryDate    DateTime @map("entry_date") @db.Date
-  refNo        String?  @map("ref_no")
+  id           String          @id @default(uuid()) @db.Uuid
+  departmentId String          @map("department_id") @db.Uuid
+  entryType    LedgerEntryType @default(RECEIPT) @map("entry_type")
+  entryDate    DateTime        @map("entry_date") @db.Date
+  receiptNo    String?         @map("receipt_no")
+  sinNo        String?         @map("sin_no") // Store Issue Note number
+  sinDate      DateTime?       @map("sin_date") @db.Date
+  refNo        String?         @map("ref_no")
   description  String
   brand        String?
-  modelNo      String?  @map("model_no")
+  modelNo      String?         @map("model_no")
+  serialNo     String?         @map("serial_no") // as written in the book; per-unit serials live on AssetItem
+  itemCode     String?         @map("item_code")
   quantity     Int
-  unitPrice    Decimal  @map("unit_price") @db.Decimal(14, 2)
-  value        Decimal  @db.Decimal(14, 2) // quantity × unitPrice, stored for reports
+  unitPrice    Decimal         @map("unit_price") @db.Decimal(14, 2)
+  value        Decimal         @db.Decimal(14, 2) // quantity × unitPrice, stored for reports
   remark       String?
-  category     String?
+  hodSigned    Boolean         @default(false) @map("hod_signed") // HOD signature present in the book
+  categoryId   String?         @map("category_id") @db.Uuid
 
   bookVolume     String?        @map("book_volume")
   bookPage       Int?           @map("book_page")
@@ -181,6 +214,7 @@ model LedgerEntry {
   createdById String? @map("created_by_id") @db.Uuid
 
   department Department  @relation(fields: [departmentId], references: [id])
+  category   Category?   @relation(fields: [categoryId], references: [id])
   createdBy  User?       @relation("EntryCreatedBy", fields: [createdById], references: [id])
   items      AssetItem[]
   approvals  Approval[]
@@ -190,6 +224,8 @@ model LedgerEntry {
   deletedAt DateTime? @map("deleted_at")
 
   @@index([departmentId, entryDate])
+  @@index([entryType])
+  @@index([categoryId])
   @@index([bookStatus])
   @@map("ledger_entries")
 }

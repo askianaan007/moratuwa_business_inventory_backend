@@ -9,7 +9,7 @@ export async function summary(user: AuthUser, requestedDepartmentId?: string) {
 
   const [entries, totals, items, pendingBook, awaitingApproval, needsAttention, missing, recent] = await Promise.all([
     prisma.ledgerEntry.count({ where: entryWhere }),
-    prisma.ledgerEntry.aggregate({ where: entryWhere, _sum: { value: true } }),
+    prisma.ledgerEntry.aggregate({ where: { ...entryWhere, entryType: "RECEIPT" }, _sum: { value: true } }),
     prisma.assetItem.count({ where: itemWhere }),
     prisma.ledgerEntry.count({ where: { ...entryWhere, bookStatus: "PENDING_BOOK" } }),
     prisma.ledgerEntry.count({ where: { ...entryWhere, approvalStatus: "SUBMITTED" } }),
@@ -19,7 +19,7 @@ export async function summary(user: AuthUser, requestedDepartmentId?: string) {
       where: entryWhere,
       orderBy: { createdAt: "desc" },
       take: 5,
-      select: { id: true, entryDate: true, description: true, brand: true, quantity: true, value: true, bookStatus: true },
+      select: { id: true, entryType: true, entryDate: true, description: true, brand: true, quantity: true, value: true, bookStatus: true },
     }),
   ]);
 

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "./lib/prisma.js";
 import { authenticate } from "./middlewares/authenticate.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
+import { categoriesRoutes } from "./modules/categories/categories.routes.js";
 import { dashboardRoutes } from "./modules/dashboard/dashboard.routes.js";
 import { itemsRoutes } from "./modules/items/items.routes.js";
 import { ledgerRoutes } from "./modules/ledger/ledger.routes.js";
@@ -21,6 +22,7 @@ apiRoutes.use("/auth", authRoutes);
 apiRoutes.use(authenticate);
 apiRoutes.use("/dashboard", dashboardRoutes);
 apiRoutes.use("/ledger", ledgerRoutes);
+apiRoutes.use("/categories", categoriesRoutes);
 apiRoutes.use("/items", itemsRoutes);
 apiRoutes.use("/users", usersRoutes);
 apiRoutes.use("/", organisationRoutes); // /departments, /locations

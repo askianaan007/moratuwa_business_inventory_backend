@@ -1,5 +1,6 @@
 /**
- * Creates the first admin account plus a demo department and locations.
+ * Creates the first admin account, a demo department and locations, and the
+ * default item categories.
  * Safe to run more than once. Usage: npm run db:seed
  *
  * Needs SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in .env.
@@ -31,6 +32,17 @@ async function main() {
       update: {},
       create: { ...location, departmentId: department.id },
     });
+  }
+
+  for (const category of [
+    { code: "COMP", name: "Computers" },
+    { code: "MON", name: "Monitors" },
+    { code: "MOUSE", name: "Mouses" },
+    { code: "KBD", name: "Keyboards" },
+    { code: "TBL", name: "Tables" },
+    { code: "CHR", name: "Chairs" },
+  ]) {
+    await prisma.category.upsert({ where: { code: category.code }, update: {}, create: category });
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });

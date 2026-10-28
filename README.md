@@ -56,7 +56,7 @@ src/
 | POST | `/auth/login` · `/auth/refresh` · `/auth/logout` | public |
 | GET | `/auth/me` · POST `/auth/change-password` | any signed-in user |
 | GET | `/dashboard/summary` | any |
-| GET | `/ledger?q&bookStatus&approvalStatus&from&to&page&pageSize` · `/ledger/:id` | any |
+| GET | `/ledger?q&entryType&categoryId&hodSigned&bookStatus&approvalStatus&from&to&page&pageSize` · `/ledger/:id` | any |
 | POST | `/ledger` · PATCH/DELETE `/ledger/:id` | Admin, HOD, TO |
 | POST | `/ledger/:id/book` (mark written in book) · `/ledger/:id/submit` | Admin, HOD, TO |
 | POST | `/ledger/:id/decision` (approve/reject) | Admin, HOD (not their own entry) |
@@ -64,7 +64,8 @@ src/
 | PATCH | `/items/:id` · POST `/items/:id/move` | Admin, HOD, TO |
 | GET | `/departments` · `/locations` | any (own department) |
 | POST | `/locations` | Admin, HOD, TO |
-| POST | `/departments` · GET/POST/PATCH `/users` | Admin |
+| GET | `/categories?includeInactive` (with per-category ledger totals) | any |
+| POST | `/departments` · POST/PATCH `/categories` · GET/POST/PATCH `/users` | Admin |
 
 ## Security
 
