@@ -26,7 +26,9 @@ export function planSvg(plan: PlanGeometry, deskStatus: Record<string, LabCheckS
   parts.push(`<text x="${board.x + board.w / 2}" y="${board.y + 12}" font-size="10" fill="#fff" text-anchor="middle">FRONT · BOARD</text>`);
 
   for (const b of plan.blocks) {
-    parts.push(`<text x="${b.x + 28}" y="${b.y + 14}" font-size="11" font-weight="bold" fill="#000">Block ${esc(b.code)} · ${esc(b.name)}</text>`);
+    // Mirrored blocks start at their right-hand end, so their title does too.
+    const at = b.mirrored ? `x="${b.x + b.w - 28}" text-anchor="end"` : `x="${b.x + 28}"`;
+    parts.push(`<text ${at} y="${b.y + 14}" font-size="11" font-weight="bold" fill="#000">Block ${esc(b.code)} · ${esc(b.name)}</text>`);
   }
   for (const r of plan.rows) {
     parts.push(`<text x="${r.x + 12}" y="${r.y + 4}" font-size="10" fill="#444" text-anchor="middle">R${esc(r.label)}</text>`);

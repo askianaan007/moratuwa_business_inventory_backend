@@ -88,8 +88,8 @@ export function positionCode(blockCode: string, rowLabel: string, seatNumber: nu
 }
 
 /** Column of a desk within its block, counted from the block's left edge as drawn. */
-export function deskColumn(block: { x: number }, desk: { x: number }) {
-  return Math.round((desk.x - block.x - ROW_LABEL_W) / (DESK_W + SEAT_GAP));
+export function deskColumn(block: { x: number; mirrored?: boolean }, desk: { x: number }) {
+  return Math.round((desk.x - block.x - (block.mirrored ? 0 : ROW_LABEL_W)) / (DESK_W + SEAT_GAP));
 }
 
 export function computePlan(blocks: LayoutBlock[], fixtures: LayoutFixture[] = []): PlanGeometry {
@@ -118,12 +118,13 @@ export function computePlan(blocks: LayoutBlock[], fixtures: LayoutFixture[] = [
 
     block.rows.forEach((row, ri) => {
       const y = top + ri * (DESK_H + ROW_GAP);
-      planRows.push({ id: row.id, blockId: block.id, label: row.label, x: cursor, y: y + DESK_H / 2 });
+      // Mirrored blocks carry their row labels on the right, beside S1.
+      planRows.push({ id: row.id, blockId: block.id, label: row.label, x: mirrored ? cursor + w - ROW_LABEL_W : cursor, y: y + DESK_H / 2 });
       row.seats.forEach((seat, si) => {
         desks.push({
           seatId: seat.id,
           kind: seat.kind,
-          x: cursor + ROW_LABEL_W + (mirrored ? maxSeats - 1 - si : si) * (DESK_W + SEAT_GAP),
+          x: cursor + (mirrored ? (maxSeats - 1 - si) * (DESK_W + SEAT_GAP) : ROW_LABEL_W + si * (DESK_W + SEAT_GAP)),
           y,
           w: DESK_W,
           h: DESK_H,

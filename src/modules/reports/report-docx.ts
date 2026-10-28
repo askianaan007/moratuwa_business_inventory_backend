@@ -97,23 +97,20 @@ function planTables(report: ReportData): (Paragraph | Table)[] {
         rows: rows.map((r) => {
           // Placed by drawn column, so mirrored blocks match the plan.
           const desks = new Map(report.plan.desks.filter((d) => d.blockCode === block.code && d.rowLabel === r.label).map((d) => [deskColumn(block, d), d]));
-          return new TableRow({
-            cantSplit: true,
-            children: [
-              cell(`R${r.label}`, { bold: true, width: 520 }),
-              ...Array.from({ length: maxSeats }, (_, i) => {
-                const d = desks.get(i);
-                if (!d || d.kind === "NO_TABLE") return cell("", { width: 1050 });
-                const status = report.deskStatus[d.seatId];
-                const title = d.kind === "EMPTY_TABLE" ? "empty" : (d.label ?? (d.kind === "INSTRUCTOR" ? "instr." : ""));
-                return cell(`${title}\nS${d.seatNumber}${status ? ` ${STATUS_CODE[status]}` : ""}`, {
-                  width: 1050,
-                  size: 14,
-                  ...(status && { shade: SHADE[status] }),
-                });
-              }),
-            ],
+          const label = cell(`R${r.label}`, { bold: true, width: 520 });
+          const seats = Array.from({ length: maxSeats }, (_, i) => {
+            const d = desks.get(i);
+            if (!d || d.kind === "NO_TABLE") return cell("", { width: 1050 });
+            const status = report.deskStatus[d.seatId];
+            const title = d.kind === "EMPTY_TABLE" ? "empty" : (d.label ?? (d.kind === "INSTRUCTOR" ? "instr." : ""));
+            return cell(`${title}\nS${d.seatNumber}${status ? ` ${STATUS_CODE[status]}` : ""}`, {
+              width: 1050,
+              size: 14,
+              ...(status && { shade: SHADE[status] }),
+            });
           });
+          // Mirrored blocks carry the row label on the right, as on the plan.
+          return new TableRow({ cantSplit: true, children: block.mirrored ? [...seats, label] : [label, ...seats] });
         }),
       }),
       para("", { after: 80 }),
