@@ -94,3 +94,7 @@ docker build -t labledger-api .
 docker run --env-file .env -p 4000:4000 labledger-api
 ```
 The image runs as a non-root user. Apply migrations with `npm run db:deploy` before starting a new version.
+
+
+npx prisma migrate reset --force
+npm run db:seed

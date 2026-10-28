@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authorize, currentUser } from "../../middlewares/authenticate.js";
 import { prisma } from "../../lib/prisma.js";
 import { logActivity } from "../../utils/activity-log.js";
+import { AppError } from "../../utils/app-error.js";
 import { departmentScope, requireDepartment } from "../../utils/scope.js";
 
 // ─── Schemas ────────────────────────────────────────────────────────────
@@ -15,6 +16,10 @@ const createDepartmentSchema = z.object({
     .regex(/^[A-Z0-9]{2,10}$/, "Use 2–10 letters/numbers, e.g. ELEC"),
   name: z.string().trim().min(2).max(120),
 });
+
+// The code is part of asset tags and audit references, so only the name can change.
+const updateDepartmentSchema = z.object({ name: z.string().trim().min(2).max(120) });
+const idParams = z.object({ id: z.uuid() });
 
 const listLocationsQuery = z.object({ departmentId: z.uuid().optional() });
 
@@ -38,9 +43,9 @@ async function listDepartments(req: Request, res: Response) {
   const departments = await prisma.department.findMany({
     where: departmentId ? { id: departmentId } : {},
     orderBy: { name: "asc" },
-    select: { id: true, code: true, name: true },
+    select: { id: true, code: true, name: true, _count: { select: { locations: { where: { deletedAt: null } }, users: true } } },
   });
-  res.json({ data: departments });
+  res.json({ data: departments.map(({ _count, ...d }) => ({ ...d, locations: _count.locations, users: _count.users })) });
 }
 
 async function createDepartment(req: Request, res: Response) {
@@ -52,6 +57,20 @@ async function createDepartment(req: Request, res: Response) {
     return created;
   });
   res.status(201).json({ data: department });
+}
+
+async function updateDepartment(req: Request, res: Response) {
+  const actor = currentUser(req);
+  const { id } = idParams.parse(req.params);
+  const input = updateDepartmentSchema.parse(req.body);
+  const department = await prisma.$transaction(async (tx) => {
+    const before = await tx.department.findUnique({ where: { id } });
+    if (!before) throw AppError.notFound("Department");
+    const after = await tx.department.update({ where: { id }, data: input });
+    await logActivity(tx, { actorId: actor.id, action: "update", tableName: "departments", rowId: id, before, after });
+    return after;
+  });
+  res.json({ data: department });
 }
 
 async function listLocations(req: Request, res: Response) {
@@ -83,5 +102,6 @@ async function createLocation(req: Request, res: Response) {
 export const organisationRoutes = Router();
 organisationRoutes.get("/departments", listDepartments);
 organisationRoutes.post("/departments", authorize("ADMIN"), createDepartment);
+organisationRoutes.patch("/departments/:id", authorize("ADMIN"), updateDepartment);
 organisationRoutes.get("/locations", listLocations);
 organisationRoutes.post("/locations", authorize("ADMIN", "HOD", "TECHNICAL_OFFICER"), createLocation);
