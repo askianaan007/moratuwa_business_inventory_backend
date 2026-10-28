@@ -3,7 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import type { AuthUser } from "../../types/express.js";
 import { logActivity } from "../../utils/activity-log.js";
 import { AppError } from "../../utils/app-error.js";
-import { equipmentSelect, loadRoomForUser } from "../rooms/room-view.js";
+import { equipmentSelect, loadRoomForUser, OPEN_AUDIT_STATUSES } from "../rooms/room-view.js";
 import { codeKey, equipmentCode, generateDefaultEquipment, slotKey } from "./equipment-keys.js";
 import type { CreateEquipmentInput, MoveEquipmentInput, ReplaceEquipmentInput, UpdateEquipmentInput } from "./equipment.schema.js";
 
@@ -120,6 +120,13 @@ export async function update(user: AuthUser, id: string, input: UpdateEquipmentI
       ...fields,
       ...(fields.code && { activeCodeKey: codeKey(before.locationId, fields.code) }),
     });
+    // Open audits show the item as it is now; approved ones keep what was signed off.
+    if (after.code !== before.code || after.serialNo !== before.serialNo) {
+      await tx.labAuditCheck.updateMany({
+        where: { equipmentId: id, audit: { status: { in: [...OPEN_AUDIT_STATUSES] } } },
+        data: { itemCode: after.code, serialNo: after.serialNo },
+      });
+    }
     await logActivity(tx, { actorId: user.id, action: "update", tableName: "equipment", rowId: id, before, after });
     return after;
   });
