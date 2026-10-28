@@ -54,3 +54,7 @@ export function createApp() {
   app.use(errorHandler);
   return app;
 }
+
+/** Default export is the entrypoint Vercel's Express runtime serves. */
+const app = createApp();
+export default app;

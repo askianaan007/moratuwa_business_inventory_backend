@@ -1,9 +1,7 @@
-import { createApp } from "./app.js";
+import app from "./app.js";
 import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
-
-const app = createApp();
 
 const server = app.listen(env.PORT, () => {
   logger.info(`LabLedger API listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
