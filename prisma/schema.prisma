@@ -1,0 +1,353 @@
+// LabLedger — inventory ledger & audit system.
+// See docs/PLAN.md §4 for the reasoning behind this model.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  HOD
+  TECHNICAL_OFFICER
+  VIEWER
+}
+
+/// Tracks the parallel-run with the physical ledger book.
+enum BookStatus {
+  PENDING_BOOK // recorded in the app, not yet written in the book
+  WRITTEN_IN_BOOK
+  SYSTEM_ONLY
+}
+
+enum ApprovalStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum ItemCondition {
+  GOOD
+  NEEDS_REPAIR
+  DAMAGED
+  UNSERVICEABLE
+}
+
+enum ItemStatus {
+  IN_USE
+  IN_STORE
+  ON_LOAN
+  MISSING
+  DISPOSED
+}
+
+enum AuditSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum AuditResult {
+  FOUND
+  MISSING
+  FOUND_ELSEWHERE
+  UNREGISTERED
+}
+
+// ─── Organisation ───────────────────────────────────────────────────────
+
+model Department {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique // e.g. "ELEC" — used in asset tag codes
+  name String
+
+  locations     Location[]
+  users         User[]
+  ledgerEntries LedgerEntry[]
+  auditSessions AuditSession[]
+  tagCounters   TagCounter[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("departments")
+}
+
+model Location {
+  id           String  @id @default(uuid()) @db.Uuid
+  departmentId String  @map("department_id") @db.Uuid
+  code         String // e.g. "ELEC-LAB-02"
+  name         String
+  building     String?
+  floor        String?
+
+  department     Department     @relation(fields: [departmentId], references: [id])
+  items          AssetItem[]
+  auditSessions  AuditSession[]
+  auditRecords   AuditRecord[]  @relation("ObservedLocation")
+  movementsFrom  Movement[]     @relation("MovementFrom")
+  movementsTo    Movement[]     @relation("MovementTo")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([departmentId, code])
+  @@map("locations")
+}
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String
+  email        String  @unique
+  role         Role    @default(TECHNICAL_OFFICER)
+  departmentId String? @map("department_id") @db.Uuid
+
+  passwordHash     String    @map("password_hash")
+  isActive         Boolean   @default(true) @map("is_active")
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until")
+  lastLoginAt      DateTime? @map("last_login_at")
+
+  department      Department?    @relation(fields: [departmentId], references: [id])
+  createdEntries  LedgerEntry[]  @relation("EntryCreatedBy")
+  approvals       Approval[]
+  auditSessions   AuditSession[]
+  auditRecords    AuditRecord[]
+  movements       Movement[]
+  disposals       Disposal[]
+  activityLogs    ActivityLog[]
+  refreshTokens   RefreshToken[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+/// Refresh tokens are stored hashed (SHA-256) and rotated on every use.
+/// All tokens from one login share a familyId; re-use of a rotated token
+/// revokes the whole family (stolen-token detection).
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  familyId   String    @map("family_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  replacedAt DateTime? @map("replaced_at")
+  userAgent  String?   @map("user_agent")
+  ip         String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// ─── Ledger ─────────────────────────────────────────────────────────────
+
+/// One row of the physical ledger book, column for column.
+model LedgerEntry {
+  id           String   @id @default(uuid()) @db.Uuid
+  departmentId String   @map("department_id") @db.Uuid
+  entryDate    DateTime @map("entry_date") @db.Date
+  refNo        String?  @map("ref_no")
+  description  String
+  brand        String?
+  modelNo      String?  @map("model_no")
+  quantity     Int
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(14, 2)
+  value        Decimal  @db.Decimal(14, 2) // quantity × unitPrice, stored for reports
+  remark       String?
+  category     String?
+
+  bookVolume     String?        @map("book_volume")
+  bookPage       Int?           @map("book_page")
+  bookStatus     BookStatus     @default(PENDING_BOOK) @map("book_status")
+  approvalStatus ApprovalStatus @default(DRAFT) @map("approval_status")
+
+  createdById String? @map("created_by_id") @db.Uuid
+
+  department Department  @relation(fields: [departmentId], references: [id])
+  createdBy  User?       @relation("EntryCreatedBy", fields: [createdById], references: [id])
+  items      AssetItem[]
+  approvals  Approval[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([departmentId, entryDate])
+  @@index([bookStatus])
+  @@map("ledger_entries")
+}
+
+/// One physical unit. A ledger row with quantity 20 has 20 asset items
+/// (unless it is a bulk/consumable entry, which gets a single bulk item).
+model AssetItem {
+  id            String        @id @default(uuid()) @db.Uuid
+  ledgerEntryId String        @map("ledger_entry_id") @db.Uuid
+  tagCode       String        @unique @map("tag_code") // printed as QR, e.g. UOM-ELEC-2026-00123
+  serialNo      String?       @map("serial_no")
+  locationId    String?       @map("location_id") @db.Uuid
+  custodian     String?
+  condition     ItemCondition @default(GOOD)
+  status        ItemStatus    @default(IN_USE)
+  isBulk        Boolean       @default(false) @map("is_bulk")
+  bulkQty       Int?          @map("bulk_qty")
+
+  ledgerEntry  LedgerEntry   @relation(fields: [ledgerEntryId], references: [id])
+  location     Location?     @relation(fields: [locationId], references: [id])
+  auditRecords AuditRecord[]
+  movements    Movement[]
+  disposal     Disposal?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([serialNo])
+  @@index([locationId])
+  @@map("asset_items")
+}
+
+/// Per-department, per-year running number for asset tag codes.
+model TagCounter {
+  departmentId String @map("department_id") @db.Uuid
+  year         Int
+  last         Int    @default(0)
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  @@id([departmentId, year])
+  @@map("tag_counters")
+}
+
+/// Digital counterpart of the "Signature of HOD" column.
+model Approval {
+  id            String         @id @default(uuid()) @db.Uuid
+  ledgerEntryId String         @map("ledger_entry_id") @db.Uuid
+  approverId    String         @map("approver_id") @db.Uuid
+  status        ApprovalStatus
+  comment       String?
+  decidedAt     DateTime       @default(now()) @map("decided_at")
+
+  ledgerEntry LedgerEntry @relation(fields: [ledgerEntryId], references: [id])
+  approver    User        @relation(fields: [approverId], references: [id])
+
+  @@map("approvals")
+}
+
+// ─── Audits ─────────────────────────────────────────────────────────────
+
+model AuditSession {
+  id           String             @id @default(uuid()) @db.Uuid
+  departmentId String             @map("department_id") @db.Uuid
+  title        String // e.g. "Board of Survey 2026"
+  status       AuditSessionStatus @default(OPEN)
+  startedById  String             @map("started_by_id") @db.Uuid
+  startedAt    DateTime           @default(now()) @map("started_at")
+  closedAt     DateTime?          @map("closed_at")
+
+  department Department    @relation(fields: [departmentId], references: [id])
+  startedBy  User          @relation(fields: [startedById], references: [id])
+  locations  Location[]
+  records    AuditRecord[]
+
+  @@map("audit_sessions")
+}
+
+model AuditRecord {
+  id                 String         @id @default(uuid()) @db.Uuid
+  clientId           String?        @unique @map("client_id") @db.Uuid // generated on the phone; makes offline sync idempotent
+  sessionId          String         @map("session_id") @db.Uuid
+  assetItemId        String?        @map("asset_item_id") @db.Uuid // null for unregistered finds
+  result             AuditResult
+  condition          ItemCondition?
+  observedLocationId String?        @map("observed_location_id") @db.Uuid
+  note               String?
+  scannedAt          DateTime       @default(now()) @map("scanned_at")
+  scannedById        String         @map("scanned_by_id") @db.Uuid
+
+  session          AuditSession @relation(fields: [sessionId], references: [id])
+  assetItem        AssetItem?   @relation(fields: [assetItemId], references: [id])
+  observedLocation Location?    @relation("ObservedLocation", fields: [observedLocationId], references: [id])
+  scannedBy        User         @relation(fields: [scannedById], references: [id])
+
+  @@index([sessionId])
+  @@map("audit_records")
+}
+
+// ─── Lifecycle ──────────────────────────────────────────────────────────
+
+model Movement {
+  id             String   @id @default(uuid()) @db.Uuid
+  assetItemId    String   @map("asset_item_id") @db.Uuid
+  fromLocationId String?  @map("from_location_id") @db.Uuid
+  toLocationId   String   @map("to_location_id") @db.Uuid
+  reason         String?
+  movedAt        DateTime @default(now()) @map("moved_at")
+  movedById      String   @map("moved_by_id") @db.Uuid
+
+  assetItem    AssetItem @relation(fields: [assetItemId], references: [id])
+  fromLocation Location? @relation("MovementFrom", fields: [fromLocationId], references: [id])
+  toLocation   Location  @relation("MovementTo", fields: [toLocationId], references: [id])
+  movedBy      User      @relation(fields: [movedById], references: [id])
+
+  @@map("movements")
+}
+
+model Disposal {
+  id           String   @id @default(uuid()) @db.Uuid
+  assetItemId  String   @unique @map("asset_item_id") @db.Uuid
+  reason       String
+  boardRef     String?  @map("board_ref") // Board of Survey / condemnation reference
+  disposedAt   DateTime @default(now()) @map("disposed_at")
+  approvedById String   @map("approved_by_id") @db.Uuid
+
+  assetItem  AssetItem @relation(fields: [assetItemId], references: [id])
+  approvedBy User      @relation(fields: [approvedById], references: [id])
+
+  @@map("disposals")
+}
+
+/// Photos for any record (entry, item, audit record). Files live in S3/MinIO.
+model Photo {
+  id         String   @id @default(uuid()) @db.Uuid
+  ownerType  String   @map("owner_type")
+  ownerId    String   @map("owner_id") @db.Uuid
+  storageKey String   @map("storage_key")
+  takenAt    DateTime @default(now()) @map("taken_at")
+
+  @@index([ownerType, ownerId])
+  @@map("photos")
+}
+
+/// Append-only change history. Never updated or deleted.
+model ActivityLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String // create | update | delete | approve | ...
+  tableName String   @map("table_name")
+  rowId     String   @map("row_id")
+  before    Json?
+  after     Json?
+  at        DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([tableName, rowId])
+  @@map("activity_log")
+}
