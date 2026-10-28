@@ -197,15 +197,23 @@ export async function buildReportData(
   }
 
   // ── workstation register ──
-  // Named as on the room plan now; rows are already in walking order (left-most PC first).
+  // Named as on the room plan now, and listed as drawn: block by block, row by
+  // row, left to right (mirrored blocks therefore start from their last seat).
   const wsLive = new Map(view.workstations.map((w) => [w.id, w]));
+  const blockIndex = new Map(view.plan.blocks.map((b, i) => [b.code, i]));
+  const deskBySeat = new Map(view.plan.desks.map((d) => [d.seatId, d]));
+  const drawnAt = (workstationId: string) => {
+    const seatId = wsLive.get(workstationId)?.seatId;
+    const desk = seatId ? deskBySeat.get(seatId) : undefined;
+    return desk ? [blockIndex.get(desk.blockCode) ?? 0, desk.y, desk.x] : [Infinity, 0, 0];
+  };
   const columns = new Map<string, string>();
   const register = new Map<string, ReportData["workstations"][number]>();
   for (const c of audit.checks) {
     if (!c.workstationId || c.targetKind !== "EQUIPMENT") continue;
     columns.set(c.typeCode, c.typeName);
     const row = register.get(c.workstationId) ?? {
-      number: register.size + 1,
+      number: 0,
       positionCode: wsLive.get(c.workstationId)?.positionCode ?? c.positionCode,
       label: wsLive.get(c.workstationId)?.label ?? c.stationLabel ?? c.itemCode,
       cells: {},
@@ -218,7 +226,10 @@ export async function buildReportData(
     }
     register.set(c.workstationId, row);
   }
-  const workstations = [...register.values()];
+  const workstations = [...register.entries()]
+    .map(([wsId, row]) => ({ row, at: drawnAt(wsId) }))
+    .sort((a, b) => a.at[0]! - b.at[0]! || a.at[1]! - b.at[1]! || a.at[2]! - b.at[2]!)
+    .map(({ row }, i) => ({ ...row, number: i + 1 }));
 
   // ── history across approved months ──
   const isFaulty = (s: LabCheckStatus) => FAULTY.includes(s);

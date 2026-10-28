@@ -21,6 +21,7 @@ import {
 } from "docx";
 import type { LabCheckStatus } from "../../generated/prisma/client.js";
 import { STATUSES, STATUS_CODE, STATUS_LABEL, type ReportData } from "../lab-audits/lab-audit-report.js";
+import { deskColumn } from "../rooms/plan-geometry.js";
 
 /**
  * Editable Word version of the report, built from the same snapshot as the
@@ -94,13 +95,14 @@ function planTables(report: ReportData): (Paragraph | Table)[] {
       new Table({
         layout: TableLayoutType.FIXED,
         rows: rows.map((r) => {
-          const desks = report.plan.desks.filter((d) => d.blockCode === block.code && d.rowLabel === r.label);
+          // Placed by drawn column, so mirrored blocks match the plan.
+          const desks = new Map(report.plan.desks.filter((d) => d.blockCode === block.code && d.rowLabel === r.label).map((d) => [deskColumn(block, d), d]));
           return new TableRow({
             cantSplit: true,
             children: [
               cell(`R${r.label}`, { bold: true, width: 520 }),
               ...Array.from({ length: maxSeats }, (_, i) => {
-                const d = desks[i];
+                const d = desks.get(i);
                 if (!d || d.kind === "NO_TABLE") return cell("", { width: 1050 });
                 const status = report.deskStatus[d.seatId];
                 const title = d.kind === "EMPTY_TABLE" ? "empty" : (d.label ?? (d.kind === "INSTRUCTOR" ? "instr." : ""));
