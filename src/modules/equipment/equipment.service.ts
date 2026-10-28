@@ -3,7 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import type { AuthUser } from "../../types/express.js";
 import { logActivity } from "../../utils/activity-log.js";
 import { AppError } from "../../utils/app-error.js";
-import { equipmentSelect, loadRoomForUser, OPEN_AUDIT_STATUSES } from "../rooms/room-view.js";
+import { equipmentSelect, loadRoomForUser, OPEN_AUDIT_STATUSES, syncOpenAuditStationLabel } from "../rooms/room-view.js";
 import { codeKey, equipmentCode, generateDefaultEquipment, slotKey } from "./equipment-keys.js";
 import type { CreateEquipmentInput, MoveEquipmentInput, ReplaceEquipmentInput, UpdateEquipmentInput } from "./equipment.schema.js";
 
@@ -126,6 +126,8 @@ export async function update(user: AuthUser, id: string, input: UpdateEquipmentI
         where: { equipmentId: id, audit: { status: { in: [...OPEN_AUDIT_STATUSES] } } },
         data: { itemCode: after.code, serialNo: after.serialNo },
       });
+      // A PC without a custom name is called by its monitor code.
+      if (after.workstationId) await syncOpenAuditStationLabel(tx, after.workstationId);
     }
     await logActivity(tx, { actorId: user.id, action: "update", tableName: "equipment", rowId: id, before, after });
     return after;

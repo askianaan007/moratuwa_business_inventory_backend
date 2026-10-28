@@ -473,6 +473,78 @@ export async function reopen(user: AuthUser, id: string, input: { expectedVersio
   return get(user, id);
 }
 
+// ─── Reset & delete ─────────────────────────────────────────────────────
+
+/**
+ * Starts the audit again from the beginning: every check is thrown away and
+ * rebuilt from the room as it is now, and the audit goes back to draft.
+ * Approved audits must be reopened first.
+ */
+export async function reset(user: AuthUser, id: string, input: { expectedVersion: number; reason: string }) {
+  const audit = await loadAudit(user, id);
+  if (audit.status === "APPROVED") throw AppError.conflict("Approved audits must be reopened before they can be reset");
+  // Read the room outside the transaction; the database is remote.
+  const room = await prisma.location.findUniqueOrThrow({ where: { id: audit.locationId }, select: { layoutVersion: true } });
+  const view = await loadRoomView(prisma, audit.locationId);
+  if (!view.blocks.length) throw AppError.badRequest("Set up the room layout before resetting the audit");
+  const rows = buildTargets(view).map((t) => targetData(id, t));
+
+  await prisma.$transaction(
+    async (tx) => {
+      const current = await tx.location.findUniqueOrThrow({ where: { id: audit.locationId }, select: { layoutVersion: true } });
+      if (current.layoutVersion !== room.layoutVersion) throw AppError.conflict("The room layout changed while resetting. Please try again.");
+      const before = await tx.labAuditCheck.groupBy({ by: ["status"], where: { auditId: id }, _count: true });
+      await bumpAudit(tx, id, input.expectedVersion, {
+        status: "DRAFT",
+        completedOn: null,
+        generalRemarks: null,
+        recommendations: null,
+        layoutVersionAtStart: room.layoutVersion,
+        copiedFromAuditId: null,
+      });
+      await tx.labAuditCheck.deleteMany({ where: { auditId: id } });
+      if (rows.length) await tx.labAuditCheck.createMany({ data: rows });
+      await tx.labAuditTransition.create({ data: { auditId: id, from: audit.status, to: "DRAFT", actorId: user.id, comment: `Reset: ${input.reason}` } });
+      await logActivity(tx, {
+        actorId: user.id,
+        action: "reset",
+        tableName: "lab_audits",
+        rowId: id,
+        before: { status: audit.status, checks: Object.fromEntries(before.map((b) => [b.status, b._count])) },
+        after: { reason: input.reason, checks: rows.length },
+      });
+    },
+    { timeout: 30_000 },
+  );
+  return get(user, id);
+}
+
+/** Removes the audit for that room and month entirely, so a new one can be started. */
+export async function remove(user: AuthUser, id: string, input: { reason: string }) {
+  const audit = await loadAudit(user, id);
+  if (audit.status === "APPROVED" && user.role !== "ADMIN") throw AppError.forbidden("Only an admin can delete an approved audit");
+  await prisma.$transaction(
+    async (tx) => {
+      const checks = await tx.labAuditCheck.groupBy({ by: ["status"], where: { auditId: id }, _count: true });
+      await tx.labAudit.updateMany({ where: { copiedFromAuditId: id }, data: { copiedFromAuditId: null } });
+      await tx.labAuditCheck.deleteMany({ where: { auditId: id } });
+      await tx.labAuditTransition.deleteMany({ where: { auditId: id } });
+      await tx.labAuditSnapshot.deleteMany({ where: { auditId: id } });
+      await tx.labAudit.delete({ where: { id } });
+      await logActivity(tx, {
+        actorId: user.id,
+        action: "delete",
+        tableName: "lab_audits",
+        rowId: id,
+        before: { ...audit, checks: Object.fromEntries(checks.map((c) => [c.status, c._count])) },
+        after: { reason: input.reason },
+      });
+    },
+    { timeout: 30_000 },
+  );
+  return { id, locationId: audit.locationId, period: periodKey(audit.period) };
+}
+
 // ─── Reports ────────────────────────────────────────────────────────────
 
 /**

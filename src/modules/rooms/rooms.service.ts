@@ -7,7 +7,7 @@ import { AppError } from "../../utils/app-error.js";
 import { departmentScope, requireDepartment } from "../../utils/scope.js";
 import { codeKey, equipmentCode, generateDefaultEquipment, numberKey } from "../equipment/equipment-keys.js";
 import { computePlan, type LayoutBlock } from "./plan-geometry.js";
-import { loadRoomForUser, loadRoomView, serializeRoomView, type RoomView } from "./room-view.js";
+import { loadRoomForUser, loadRoomView, serializeRoomView, syncOpenAuditStationLabel, type RoomView } from "./room-view.js";
 import type { CreateRoomInput, LayoutInput, UpdateRoomInput } from "./rooms.schema.js";
 
 type Tx = Prisma.TransactionClient;
@@ -431,6 +431,7 @@ export async function updateWorkstation(user: AuthUser, id: string, input: { exp
       data: { labelOverride: input.labelOverride || null, version: { increment: 1 } },
     });
     if (!done.count) throw versionConflict("This workstation");
+    await syncOpenAuditStationLabel(tx, id);
     const after = await tx.workstation.findUniqueOrThrow({ where: { id } });
     await logActivity(tx, { actorId: user.id, action: "update", tableName: "workstations", rowId: id, before, after });
     return after;

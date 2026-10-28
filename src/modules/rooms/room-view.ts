@@ -46,11 +46,24 @@ export type EquipmentView = Prisma.EquipmentGetPayload<{ select: typeof equipmen
 /** Display name of a PC: manual label, else its primary (monitor) code, else PC-07. */
 export function workstationLabel(
   ws: { id: string; number: number; labelOverride: string | null },
-  equipment: Pick<EquipmentView, "workstationId" | "slot" | "code" | "state" | "type">[],
+  equipment: (Pick<EquipmentView, "workstationId" | "slot" | "code" | "state"> & { type: { isPrimary: boolean } })[],
 ) {
   if (ws.labelOverride) return ws.labelOverride;
   const primary = equipment.find((e) => e.workstationId === ws.id && e.type.isPrimary && e.slot === 1 && e.state !== "RETIRED");
   return primary?.code ?? `PC-${pad(ws.number)}`;
+}
+
+/** Keeps a PC's name in open audits in step with the room plan. */
+export async function syncOpenAuditStationLabel(db: Db, workstationId: string) {
+  const ws = await db.workstation.findUniqueOrThrow({ where: { id: workstationId }, select: { id: true, number: true, labelOverride: true } });
+  const equipment = await db.equipment.findMany({
+    where: { workstationId, state: { not: "RETIRED" } },
+    select: { workstationId: true, slot: true, code: true, state: true, type: { select: { isPrimary: true } } },
+  });
+  await db.labAuditCheck.updateMany({
+    where: { workstationId, audit: { status: { in: [...OPEN_AUDIT_STATUSES] } } },
+    data: { stationLabel: workstationLabel(ws, equipment) },
+  });
 }
 
 /**

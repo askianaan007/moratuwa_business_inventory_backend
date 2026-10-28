@@ -197,16 +197,17 @@ export async function buildReportData(
   }
 
   // ── workstation register ──
-  const wsNumber = new Map(view.workstations.map((w) => [w.id, w.number]));
+  // Named as on the room plan now; rows are already in walking order (left-most PC first).
+  const wsLive = new Map(view.workstations.map((w) => [w.id, w]));
   const columns = new Map<string, string>();
   const register = new Map<string, ReportData["workstations"][number]>();
   for (const c of audit.checks) {
     if (!c.workstationId || c.targetKind !== "EQUIPMENT") continue;
     columns.set(c.typeCode, c.typeName);
     const row = register.get(c.workstationId) ?? {
-      number: wsNumber.get(c.workstationId) ?? null,
-      positionCode: c.positionCode,
-      label: c.stationLabel ?? c.itemCode,
+      number: register.size + 1,
+      positionCode: wsLive.get(c.workstationId)?.positionCode ?? c.positionCode,
+      label: wsLive.get(c.workstationId)?.label ?? c.stationLabel ?? c.itemCode,
       cells: {},
       remarks: null,
     };

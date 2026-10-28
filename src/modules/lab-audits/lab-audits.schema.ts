@@ -80,6 +80,8 @@ export const decisionSchema = z
   });
 
 export const reopenSchema = z.object({ expectedVersion: version, reason: z.string().trim().min(3).max(1000) });
+export const resetSchema = reopenSchema;
+export const deleteAuditSchema = z.object({ reason: z.string().trim().min(3).max(1000) });
 
 export const reportQuery = z.object({ revision: z.coerce.number().int().min(1).optional() });
 

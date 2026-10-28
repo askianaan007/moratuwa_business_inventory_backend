@@ -5,11 +5,13 @@ import { renderPdf } from "../reports/report-pdf.js";
 import {
   bulkSchema,
   decisionSchema,
+  deleteAuditSchema,
   idParams,
   listAuditsQuery,
   overviewQuery,
   reopenSchema,
   reportQuery,
+  resetSchema,
   startAuditSchema,
   updateAuditSchema,
   updateChecksSchema,
@@ -83,6 +85,16 @@ async function reopen(req: Request, res: Response) {
   res.json({ data: await audits.reopen(currentUser(req), id, reopenSchema.parse(req.body)) });
 }
 
+async function reset(req: Request, res: Response) {
+  const { id } = idParams.parse(req.params);
+  res.json({ data: await audits.reset(currentUser(req), id, resetSchema.parse(req.body)) });
+}
+
+async function remove(req: Request, res: Response) {
+  const { id } = idParams.parse(req.params);
+  res.json({ data: await audits.remove(currentUser(req), id, deleteAuditSchema.parse(req.body)) });
+}
+
 async function report(req: Request, res: Response) {
   const { id } = idParams.parse(req.params);
   const { revision } = reportQuery.parse(req.query);
@@ -126,6 +138,8 @@ labAuditsRoutes.post("/:id/targets/sync", auditors, syncTargets);
 labAuditsRoutes.post("/:id/submit", auditors, submit);
 labAuditsRoutes.post("/:id/decision", approvers, decide);
 labAuditsRoutes.post("/:id/reopen", admins, reopen);
+labAuditsRoutes.post("/:id/reset", approvers, reset);
+labAuditsRoutes.delete("/:id", approvers, remove);
 labAuditsRoutes.get("/:id/report", report);
 labAuditsRoutes.get("/:id/report.pdf", download("pdf"));
 labAuditsRoutes.get("/:id/report.docx", download("docx"));
