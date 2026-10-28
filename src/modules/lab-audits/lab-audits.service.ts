@@ -149,17 +149,43 @@ export async function start(user: AuthUser, input: StartAuditInput) {
   const startedOn = new Date(input.startedOn);
   if (startedOn > todayUtc()) throw AppError.badRequest("The start date cannot be in the future");
 
+  // Read everything up front: the database is remote, and doing these reads
+  // inside the transaction pushed it past its timeout on larger rooms.
+  const room = await loadRoomForUser(user, input.roomId);
+  if (room.roomType !== "LAB" && room.roomType !== "CLASSROOM") throw AppError.badRequest("Only labs and classrooms can be audited");
+  const view = await loadRoomView(prisma, room.id);
+  if (!view.blocks.length) throw AppError.badRequest("Set up the room layout before starting an audit");
+  const department = await prisma.department.findUniqueOrThrow({ where: { id: room.departmentId } });
+
+  const rows = buildTargets(view).map((t) => targetData("", t));
+
+  // Last approved month's observations become hints only; nothing counts as inspected.
+  const previous = input.copyFromPrevious
+    ? await prisma.labAudit.findFirst({
+        where: { locationId: room.id, status: "APPROVED", period: { lt: period } },
+        orderBy: { period: "desc" },
+        include: { checks: { include: { faultReason: { select: { label: true } } } } },
+      })
+    : null;
+  if (previous) {
+    const byKey = new Map(previous.checks.map((c) => [c.targetKey, c]));
+    for (const row of rows) {
+      const prev = byKey.get(row.targetKey);
+      if (!prev || prev.status === "NOT_CHECKED" || row.suggestedStatus) continue;
+      row.suggestedStatus = prev.status;
+      row.suggestedReason = [prev.faultReason?.label, prev.reasonText].filter(Boolean).join(" — ") || null;
+    }
+  }
+
+  const prefix = room.code.startsWith(`${department.code}-`) ? room.code : `${department.code}-${room.code}`;
   const id = await prisma.$transaction(
     async (tx) => {
-      const room = await loadRoomForUser(user, input.roomId, tx);
-      if (room.roomType !== "LAB" && room.roomType !== "CLASSROOM") throw AppError.badRequest("Only labs and classrooms can be audited");
-      const view = await loadRoomView(tx, room.id);
-      if (!view.blocks.length) throw AppError.badRequest("Set up the room layout before starting an audit");
+      // The targets were built from this layout version; refuse if it changed since.
+      const current = await tx.location.findUniqueOrThrow({ where: { id: room.id }, select: { layoutVersion: true } });
+      if (current.layoutVersion !== room.layoutVersion) throw AppError.conflict("The room layout changed while starting the audit. Please try again.");
       const existing = await tx.labAudit.findUnique({ where: { locationId_period: { locationId: room.id, period } } });
       if (existing) throw AppError.conflict(`An audit for ${input.period} already exists for this room (${existing.reference})`);
 
-      const department = await tx.department.findUniqueOrThrow({ where: { id: room.departmentId } });
-      const prefix = room.code.startsWith(`${department.code}-`) ? room.code : `${department.code}-${room.code}`;
       const audit = await tx.labAudit.create({
         data: {
           departmentId: room.departmentId,
@@ -171,32 +197,11 @@ export async function start(user: AuthUser, input: StartAuditInput) {
           startedOn,
           layoutVersionAtStart: room.layoutVersion,
           createdById: user.id,
+          copiedFromAuditId: previous?.id ?? null,
         },
       });
 
-      const targets = buildTargets(view);
-      const rows = targets.map((t) => targetData(audit.id, t));
-
-      // Last approved month's observations become hints only; nothing counts as inspected.
-      if (input.copyFromPrevious) {
-        const previous = await tx.labAudit.findFirst({
-          where: { locationId: room.id, status: "APPROVED", period: { lt: period } },
-          orderBy: { period: "desc" },
-          include: { checks: { include: { faultReason: { select: { label: true } } } } },
-        });
-        if (previous) {
-          const byKey = new Map(previous.checks.map((c) => [c.targetKey, c]));
-          for (const row of rows) {
-            const prev = byKey.get(row.targetKey);
-            if (!prev || prev.status === "NOT_CHECKED" || row.suggestedStatus) continue;
-            row.suggestedStatus = prev.status;
-            row.suggestedReason = [prev.faultReason?.label, prev.reasonText].filter(Boolean).join(" — ") || null;
-          }
-          await tx.labAudit.update({ where: { id: audit.id }, data: { copiedFromAuditId: previous.id } });
-        }
-      }
-
-      if (rows.length) await tx.labAuditCheck.createMany({ data: rows });
+      if (rows.length) await tx.labAuditCheck.createMany({ data: rows.map((row) => ({ ...row, auditId: audit.id })) });
       await tx.labAuditTransition.create({ data: { auditId: audit.id, from: null, to: "DRAFT", actorId: user.id } });
       await logActivity(tx, { actorId: user.id, action: "start", tableName: "lab_audits", rowId: audit.id, after: { ...audit, checks: rows.length } });
       return audit.id;
