@@ -65,7 +65,8 @@ async function seedEquipmentTypes() {
   const types = [
     { code: "MON", name: "Monitor", scope: "WORKSTATION", isPrimary: true, isDefault: true, maxPerWorkstation: 2, category: "MON", reasons: ["No display", "Flickering", "Dead pixels", "Cable damaged", "No power"] },
     { code: "CPU", name: "CPU / System unit", scope: "WORKSTATION", isDefault: true, category: "COMP", reasons: ["Not booting", "Very slow", "OS / software error", "No network", "Overheating"] },
-    { code: "UPS", name: "UPS", scope: "WORKSTATION", isDefault: true, reasons: ["Battery dead", "Beeping", "No output"] },
+    // Optional: only some PCs have a UPS, so it is not added to every new PC.
+    { code: "UPS", name: "UPS", scope: "WORKSTATION", reasons: ["Battery dead", "Beeping", "No output"] },
     { code: "KBD", name: "Keyboard", scope: "WORKSTATION", isDefault: true, category: "KBD", reasons: ["Keys not working", "Keys missing", "Not detected"] },
     { code: "MSE", name: "Mouse", scope: "WORKSTATION", isDefault: true, category: "MOUSE", reasons: ["Not detected", "Scroll broken", "Buttons broken"] },
     { code: "AC", name: "Air conditioner", scope: "ROOM", reasons: ["Not cooling", "Water leaking", "Remote missing", "Noisy"] },
