@@ -77,11 +77,15 @@ model Department {
   code String @unique // e.g. "ELEC" — used in asset tag codes
   name String
 
-  locations     Location[]
-  users         User[]
-  ledgerEntries LedgerEntry[]
-  auditSessions AuditSession[]
-  tagCounters   TagCounter[]
+  locations      Location[]
+  users          User[]
+  ledgerEntries  LedgerEntry[]
+  auditSessions  AuditSession[]
+  tagCounters    TagCounter[]
+  workstations   Workstation[]
+  equipment      Equipment[]
+  labAudits      LabAudit[]
+  reportSettings ReportSettings?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -90,12 +94,14 @@ model Department {
 }
 
 model Location {
-  id           String  @id @default(uuid()) @db.Uuid
-  departmentId String  @map("department_id") @db.Uuid
-  code         String // e.g. "ELEC-LAB-02"
-  name         String
-  building     String?
-  floor        String?
+  id            String   @id @default(uuid()) @db.Uuid
+  departmentId  String   @map("department_id") @db.Uuid
+  code          String // e.g. "ELEC-LAB-02"
+  name          String
+  building      String?
+  floor         String?
+  roomType      RoomType @default(OTHER) @map("room_type")
+  layoutVersion Int      @default(0) @map("layout_version") // optimistic lock for layout edits
 
   department    Department     @relation(fields: [departmentId], references: [id])
   items         AssetItem[]
@@ -103,6 +109,10 @@ model Location {
   auditRecords  AuditRecord[]  @relation("ObservedLocation")
   movementsFrom Movement[]     @relation("MovementFrom")
   movementsTo   Movement[]     @relation("MovementTo")
+  blocks        RoomBlock[]
+  workstations  Workstation[]
+  equipment     Equipment[]
+  labAudits     LabAudit[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -125,8 +135,8 @@ model User {
   lockedUntil      DateTime? @map("locked_until")
   lastLoginAt      DateTime? @map("last_login_at")
 
-  department     Department?    @relation(fields: [departmentId], references: [id])
-  createdEntries LedgerEntry[]  @relation("EntryCreatedBy")
+  department     Department?          @relation(fields: [departmentId], references: [id])
+  createdEntries LedgerEntry[]        @relation("EntryCreatedBy")
   approvals      Approval[]
   auditSessions  AuditSession[]
   auditRecords   AuditRecord[]
@@ -134,6 +144,10 @@ model User {
   disposals      Disposal[]
   activityLogs   ActivityLog[]
   refreshTokens  RefreshToken[]
+  labAudits      LabAudit[]           @relation("LabAuditCreatedBy")
+  labChecks      LabAuditCheck[]      @relation("LabCheckCheckedBy")
+  labTransitions LabAuditTransition[]
+  labSnapshots   LabAuditSnapshot[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -150,7 +164,8 @@ model Category {
   description String?
   isActive    Boolean @default(true) @map("is_active")
 
-  ledgerEntries LedgerEntry[]
+  ledgerEntries  LedgerEntry[]
+  equipmentTypes EquipmentType[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -249,6 +264,7 @@ model AssetItem {
   auditRecords AuditRecord[]
   movements    Movement[]
   disposal     Disposal?
+  equipment    Equipment[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -386,4 +402,360 @@ model ActivityLog {
 
   @@index([tableName, rowId])
   @@map("activity_log")
+}
+
+// ─── Lab rooms & monthly lab audit ──────────────────────────────────────
+// See repot-v2.md. Physical inspection data lives here and never writes to
+// the ledger or asset_items. "active…Key" columns are nullable @unique keys:
+// they enforce uniqueness among live rows while retired rows keep history.
+
+enum RoomType {
+  LAB
+  CLASSROOM
+  STORE
+  OFFICE
+  OTHER
+}
+
+enum SeatKind {
+  PC
+  EMPTY_TABLE
+  NO_TABLE // gap / walkway
+  INSTRUCTOR
+}
+
+enum EquipmentScope {
+  WORKSTATION
+  ROOM
+  BOTH
+}
+
+enum EquipmentState {
+  IN_SERVICE
+  AT_REPAIR
+  RETIRED
+}
+
+enum LabCheckStatus {
+  WORKING
+  NOT_WORKING
+  NEEDS_REPAIR
+  MISSING
+  REMOVED
+  NOT_CHECKED
+}
+
+enum LabAuditStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum CheckTargetKind {
+  EQUIPMENT
+  SEAT
+}
+
+/// A column of desks seen from the top, e.g. "A — Window side".
+model RoomBlock {
+  id         String    @id @default(uuid()) @db.Uuid
+  locationId String    @map("location_id") @db.Uuid
+  code       String // short code used in position codes: A-R3-S2
+  name       String
+  order      Int
+  deletedAt  DateTime? @map("deleted_at")
+
+  location Location  @relation(fields: [locationId], references: [id])
+  rows     RoomRow[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId])
+  @@map("room_blocks")
+}
+
+/// One row inside a block. Row order 1 is nearest the board.
+model RoomRow {
+  id        String    @id @default(uuid()) @db.Uuid
+  blockId   String    @map("block_id") @db.Uuid
+  label     String
+  order     Int
+  deletedAt DateTime? @map("deleted_at")
+
+  block RoomBlock @relation(fields: [blockId], references: [id])
+  seats Seat[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([blockId])
+  @@map("room_rows")
+}
+
+/// One desk position. Seat order 1 is leftmost when facing the board.
+model Seat {
+  id        String    @id @default(uuid()) @db.Uuid
+  rowId     String    @map("row_id") @db.Uuid
+  order     Int
+  kind      SeatKind  @default(PC)
+  note      String?
+  deletedAt DateTime? @map("deleted_at")
+
+  row          RoomRow         @relation(fields: [rowId], references: [id])
+  workstations Workstation[]
+  checks       LabAuditCheck[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([rowId])
+  @@map("seats")
+}
+
+/// A PC position with a stable identity. Its display label comes from the
+/// monitor, so replacing the monitor never creates a new workstation.
+model Workstation {
+  id              String    @id @default(uuid()) @db.Uuid
+  departmentId    String    @map("department_id") @db.Uuid
+  locationId      String    @map("location_id") @db.Uuid
+  seatId          String?   @map("seat_id") @db.Uuid
+  number          Int
+  labelOverride   String?   @map("label_override")
+  activeSeatKey   String?   @unique @map("active_seat_key") // seatId while placed
+  activeNumberKey String?   @unique @map("active_number_key") // "<locationId>:<number>" while live
+  version         Int       @default(0)
+  deletedAt       DateTime? @map("deleted_at")
+
+  department Department  @relation(fields: [departmentId], references: [id])
+  location   Location    @relation(fields: [locationId], references: [id])
+  seat       Seat?       @relation(fields: [seatId], references: [id])
+  equipment  Equipment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId])
+  @@map("workstations")
+}
+
+/// Monitor, CPU, UPS, AC … Global like categories; managed by admins.
+model EquipmentType {
+  id                String         @id @default(uuid()) @db.Uuid
+  code              String         @unique
+  name              String
+  scope             EquipmentScope
+  codePrefix        String         @map("code_prefix")
+  isPrimary         Boolean        @default(false) @map("is_primary") // names the PC
+  isDefault         Boolean        @default(false) @map("is_default") // added to new PCs
+  isAuditable       Boolean        @default(true) @map("is_auditable")
+  maxPerWorkstation Int            @default(1) @map("max_per_workstation")
+  categoryId        String?        @map("category_id") @db.Uuid
+  sortOrder         Int            @default(0) @map("sort_order")
+  isActive          Boolean        @default(true) @map("is_active")
+
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  equipment    Equipment[]
+  faultReasons FaultReason[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("equipment_types")
+}
+
+/// Quick-pick reasons. Deactivated, never deleted, so old checks keep their text.
+model FaultReason {
+  id        String  @id @default(uuid()) @db.Uuid
+  typeId    String? @map("type_id") @db.Uuid // null = applies to every type
+  label     String
+  group     String  @default("OTHER")
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
+
+  type   EquipmentType?  @relation(fields: [typeId], references: [id])
+  checks LabAuditCheck[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("fault_reasons")
+}
+
+/// One physical item: a PC component (workstationId set) or a room fixture.
+/// Rows are never reused: a replacement is a new row pointing at the old one.
+model Equipment {
+  id             String         @id @default(uuid()) @db.Uuid
+  departmentId   String         @map("department_id") @db.Uuid
+  locationId     String         @map("location_id") @db.Uuid
+  workstationId  String?        @map("workstation_id") @db.Uuid
+  typeId         String         @map("type_id") @db.Uuid
+  slot           Int            @default(1)
+  code           String // e.g. MON-07
+  number         Int
+  brand          String?
+  modelNo        String?        @map("model_no")
+  serialNo       String?        @map("serial_no")
+  assetItemId    String?        @map("asset_item_id") @db.Uuid
+  state          EquipmentState @default(IN_SERVICE)
+  replacesId     String?        @map("replaces_id") @db.Uuid
+  wall           String? // fixtures: FRONT | BACK | LEFT | RIGHT | CEILING
+  x              Float? // fixtures: 0–100 % across the plan
+  y              Float? // fixtures: 0–100 % down the plan
+  notes          String?
+  installedAt    DateTime       @default(now()) @map("installed_at")
+  retiredAt      DateTime?      @map("retired_at")
+  retiredReason  String?        @map("retired_reason")
+  activeCodeKey  String?        @unique @map("active_code_key") // "<locationId>:<CODE>"
+  activeSlotKey  String?        @unique @map("active_slot_key") // "<workstationId>:<typeId>:<slot>"
+  activeAssetKey String?        @unique @map("active_asset_key") // assetItemId
+  version        Int            @default(0)
+
+  department  Department      @relation(fields: [departmentId], references: [id])
+  location    Location        @relation(fields: [locationId], references: [id])
+  workstation Workstation?    @relation(fields: [workstationId], references: [id])
+  type        EquipmentType   @relation(fields: [typeId], references: [id])
+  assetItem   AssetItem?      @relation(fields: [assetItemId], references: [id])
+  replaces    Equipment?      @relation("EquipmentReplacement", fields: [replacesId], references: [id])
+  replacedBy  Equipment[]     @relation("EquipmentReplacement")
+  checks      LabAuditCheck[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId])
+  @@index([workstationId])
+  @@map("equipment")
+}
+
+/// One monthly inspection of one room.
+model LabAudit {
+  id                   String         @id @default(uuid()) @db.Uuid
+  departmentId         String         @map("department_id") @db.Uuid
+  locationId           String         @map("location_id") @db.Uuid
+  period               DateTime       @db.Date // first day of the month
+  reference            String         @unique
+  auditorName          String         @map("auditor_name")
+  auditorDesignation   String?        @map("auditor_designation")
+  startedOn            DateTime       @map("started_on") @db.Date
+  completedOn          DateTime?      @map("completed_on") @db.Date
+  status               LabAuditStatus @default(DRAFT)
+  generalRemarks       String?        @map("general_remarks")
+  recommendations      String?
+  layoutVersionAtStart Int            @map("layout_version_at_start")
+  copiedFromAuditId    String?        @map("copied_from_audit_id") @db.Uuid
+  createdById          String         @map("created_by_id") @db.Uuid
+  version              Int            @default(0)
+
+  department  Department           @relation(fields: [departmentId], references: [id])
+  location    Location             @relation(fields: [locationId], references: [id])
+  createdBy   User                 @relation("LabAuditCreatedBy", fields: [createdById], references: [id])
+  checks      LabAuditCheck[]
+  transitions LabAuditTransition[]
+  snapshots   LabAuditSnapshot[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([locationId, period])
+  @@index([departmentId, period])
+  @@map("lab_audits")
+}
+
+/// One line of an audit. Identifies exactly one target (see the CHECK
+/// constraint in the migration); display fields are frozen at creation.
+model LabAuditCheck {
+  id                      String          @id @default(uuid()) @db.Uuid
+  auditId                 String          @map("audit_id") @db.Uuid
+  targetKind              CheckTargetKind @map("target_kind")
+  equipmentId             String?         @map("equipment_id") @db.Uuid
+  seatId                  String?         @map("seat_id") @db.Uuid
+  targetKey               String          @map("target_key") // "E:<equipmentId>" | "S:<seatId>"
+  sortKey                 String          @map("sort_key")
+  positionCode            String?         @map("position_code")
+  workstationId           String?         @map("workstation_id") @db.Uuid
+  stationLabel            String?         @map("station_label")
+  typeCode                String          @map("type_code")
+  typeName                String          @map("type_name")
+  itemCode                String          @map("item_code")
+  serialNo                String?         @map("serial_no")
+  assetTag                String?         @map("asset_tag")
+  status                  LabCheckStatus  @default(NOT_CHECKED)
+  faultReasonId           String?         @map("fault_reason_id") @db.Uuid
+  reasonText              String?         @map("reason_text")
+  notes                   String?
+  actionTaken             String?         @map("action_taken")
+  followUp                String?         @map("follow_up")
+  suggestedStatus         LabCheckStatus? @map("suggested_status")
+  suggestedReason         String?         @map("suggested_reason")
+  addedAfterStart         Boolean         @default(false) @map("added_after_start")
+  targetRetiredAfterStart Boolean         @default(false) @map("target_retired_after_start")
+  checkedAt               DateTime?       @map("checked_at")
+  checkedById             String?         @map("checked_by_id") @db.Uuid
+  lastMutationId          String?         @map("last_mutation_id")
+  version                 Int             @default(0)
+
+  audit       LabAudit     @relation(fields: [auditId], references: [id])
+  equipment   Equipment?   @relation(fields: [equipmentId], references: [id])
+  seat        Seat?        @relation(fields: [seatId], references: [id])
+  faultReason FaultReason? @relation(fields: [faultReasonId], references: [id])
+  checkedBy   User?        @relation("LabCheckCheckedBy", fields: [checkedById], references: [id])
+
+  @@unique([auditId, targetKey])
+  @@map("lab_audit_checks")
+}
+
+/// Append-only workflow history: start, submit, return, approve, reopen.
+model LabAuditTransition {
+  id      String          @id @default(uuid()) @db.Uuid
+  auditId String          @map("audit_id") @db.Uuid
+  from    LabAuditStatus?
+  to      LabAuditStatus
+  actorId String          @map("actor_id") @db.Uuid
+  comment String?
+  at      DateTime        @default(now())
+
+  audit LabAudit @relation(fields: [auditId], references: [id])
+  actor User     @relation(fields: [actorId], references: [id])
+
+  @@index([auditId])
+  @@map("lab_audit_transitions")
+}
+
+/// Frozen report data. Reports are rendered only from these rows.
+model LabAuditSnapshot {
+  id          String   @id @default(uuid()) @db.Uuid
+  auditId     String   @map("audit_id") @db.Uuid
+  revision    Int
+  kind        String // SUBMITTED | APPROVED
+  data        Json
+  sha256      String
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  audit     LabAudit @relation(fields: [auditId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@unique([auditId, revision])
+  @@map("lab_audit_snapshots")
+}
+
+/// Report header and signature text, one row per department.
+model ReportSettings {
+  departmentId    String  @id @map("department_id") @db.Uuid
+  institution     String
+  faculty         String?
+  departmentTitle String  @map("department_title")
+  hodName         String? @map("hod_name")
+  hodDesignation  String? @map("hod_designation")
+  checkedByLabel  String? @map("checked_by_label")
+  footerNote      String? @map("footer_note")
+  version         Int     @default(0)
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("report_settings")
 }
