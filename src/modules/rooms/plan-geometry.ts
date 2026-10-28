@@ -26,6 +26,7 @@ export interface LayoutBlock {
   id: string;
   code: string;
   name: string;
+  seatsFromRight: boolean;
   rows: LayoutRow[];
 }
 export interface LayoutFixture {
@@ -75,6 +76,11 @@ const SEAT_GAP = 6;
 const ROW_GAP = 14;
 const AISLE = 40;
 
+/** Seat number of the si-th seat from the left; blocks may count from the right instead. */
+export function seatNumber(block: { seatsFromRight: boolean }, seatCount: number, si: number) {
+  return block.seatsFromRight ? seatCount - si : si + 1;
+}
+
 /** "A-R3-S2": block code, row label, seat number. */
 export function positionCode(blockCode: string, rowLabel: string, seatNumber: number) {
   return `${blockCode}-R${rowLabel}-S${seatNumber}`;
@@ -106,10 +112,10 @@ export function computePlan(blocks: LayoutBlock[], fixtures: LayoutFixture[] = [
           y,
           w: DESK_W,
           h: DESK_H,
-          positionCode: positionCode(block.code, row.label, si + 1),
+          positionCode: positionCode(block.code, row.label, seatNumber(block, row.seats.length, si)),
           blockCode: block.code,
           rowLabel: row.label,
-          seatNumber: si + 1,
+          seatNumber: seatNumber(block, row.seats.length, si),
           workstationId: seat.workstationId ?? null,
           label: seat.label ?? null,
         });

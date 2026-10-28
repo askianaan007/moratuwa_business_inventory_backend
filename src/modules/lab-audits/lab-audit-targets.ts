@@ -1,4 +1,5 @@
 import type { LabCheckStatus } from "../../generated/prisma/client.js";
+import { seatNumber } from "../rooms/plan-geometry.js";
 import type { RoomView } from "../rooms/room-view.js";
 
 /** One thing an audit must look at, with the display fields frozen into the check. */
@@ -43,7 +44,9 @@ const SEAT_TARGET: Record<string, string> = {
 export function buildTargets(view: RoomView): AuditTarget[] {
   const seatBase = new Map<string, string>();
   view.blocks.forEach((block, bi) =>
-    block.rows.forEach((row, ri) => row.seats.forEach((seat, si) => seatBase.set(seat.id, `${p3(bi + 1)}-${p3(ri + 1)}-${p3(si + 1)}`))),
+    block.rows.forEach((row, ri) =>
+      row.seats.forEach((seat, si) => seatBase.set(seat.id, `${p3(bi + 1)}-${p3(ri + 1)}-${p3(seatNumber(block, row.seats.length, si))}`)),
+    ),
   );
 
   const targets: AuditTarget[] = [];

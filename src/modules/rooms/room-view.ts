@@ -3,7 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import type { AuthUser } from "../../types/express.js";
 import { AppError } from "../../utils/app-error.js";
 import { assertInScope } from "../../utils/scope.js";
-import { computePlan, positionCode, type LayoutBlock, type LayoutFixture } from "./plan-geometry.js";
+import { computePlan, positionCode, seatNumber, type LayoutBlock, type LayoutFixture } from "./plan-geometry.js";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -105,11 +105,12 @@ export async function loadRoomView(db: Db, locationId: string) {
     id: block.id,
     code: block.code,
     name: block.name,
+    seatsFromRight: block.seatsFromRight,
     rows: block.rows.map((row) => ({
       id: row.id,
       label: row.label,
       seats: row.seats.map((seat, si) => {
-        positionBySeat.set(seat.id, positionCode(block.code, row.label, si + 1));
+        positionBySeat.set(seat.id, positionCode(block.code, row.label, seatNumber(block, row.seats.length, si)));
         const ws = wsBySeat.get(seat.id);
         return { id: seat.id, kind: seat.kind, workstationId: ws?.id ?? null, label: ws ? workstationLabel(ws, equipment) : null };
       }),
@@ -157,6 +158,7 @@ export async function loadRoomView(db: Db, locationId: string) {
       code: block.code,
       name: block.name,
       order: block.order,
+      seatsFromRight: block.seatsFromRight,
       rows: block.rows.map((row) => ({
         id: row.id,
         label: row.label,

@@ -62,6 +62,8 @@ const blockInput = z.object({
     .toUpperCase()
     .regex(/^[A-Z0-9]{1,4}$/, "Block codes are 1–4 letters or numbers, e.g. A"),
   name: z.string().trim().min(1).max(60),
+  /** Number seats from the right-hand end: the right-most seat is S1. */
+  seatsFromRight: z.boolean().default(false),
   rows: z.array(rowInput).min(1, "A block needs at least one row").max(40),
 });
 

@@ -126,6 +126,7 @@ function planLayout(view: RoomView, input: LayoutInput) {
       id: block.id ?? `new-${++tempId}`,
       code: block.code,
       name: block.name,
+      seatsFromRight: block.seatsFromRight,
       rows: block.rows.map((row) => {
         claim(row.id, rows, "row");
         const label = row.label.toUpperCase();
@@ -162,9 +163,9 @@ function planLayout(view: RoomView, input: LayoutInput) {
   const removedRows = [...rows.keys()].filter((id) => !seen.has(id));
   const removedBlocks = [...blocks.keys()].filter((id) => !seen.has(id));
 
-  // Any change to codes, labels, kinds or order changes position codes.
-  const signature = (list: { code: string; rows: { label: string; seats: { id: string; kind: string }[] }[] }[]) =>
-    JSON.stringify(list.map((b) => [b.code, b.rows.map((r) => [r.label, r.seats.map((s) => [s.id, s.kind])])]));
+  // Any change to codes, labels, kinds, order or seat direction changes position codes.
+  const signature = (list: { code: string; seatsFromRight: boolean; rows: { label: string; seats: { id: string; kind: string }[] }[] }[]) =>
+    JSON.stringify(list.map((b) => [b.code, b.seatsFromRight, b.rows.map((r) => [r.label, r.seats.map((s) => [s.id, s.kind])])]));
   const structural = signature(proposed) !== signature(view.blocks);
 
   return {
@@ -242,17 +243,24 @@ export async function applyLayout(user: AuthUser, id: string, input: LayoutInput
       const newBlocks: Prisma.RoomBlockCreateManyInput[] = [];
       const newRows: Prisma.RoomRowCreateManyInput[] = [];
       const newSeats: Prisma.SeatCreateManyInput[] = [];
-      const blockUpdates: { id: string; data: { code: string; name: string; order: number } }[] = [];
+      const blockUpdates: { id: string; data: { code: string; name: string; order: number; seatsFromRight: boolean } }[] = [];
       const rowUpdates: { id: string; data: { blockId: string; label: string; order: number } }[] = [];
       const seatUpdates: { id: string; data: { rowId: string; order: number; kind: SeatKind; note: string | null } }[] = [];
       const realSeatId = new Map<string, string>();
 
       for (const [bi, block] of input.blocks.entries()) {
-        const blockData = { code: block.code, name: block.name, order: bi + 1 };
+        const blockData = { code: block.code, name: block.name, order: bi + 1, seatsFromRight: block.seatsFromRight };
         const blockId = block.id ?? randomUUID();
         const oldBlock = block.id ? oldBlocks.get(block.id) : undefined;
         if (!oldBlock) newBlocks.push({ id: blockId, locationId: id, ...blockData });
-        else if (oldBlock.code !== blockData.code || oldBlock.name !== blockData.name || oldBlock.order !== blockData.order) blockUpdates.push({ id: blockId, data: blockData });
+        else if (
+          oldBlock.code !== blockData.code ||
+          oldBlock.name !== blockData.name ||
+          oldBlock.order !== blockData.order ||
+          oldBlock.seatsFromRight !== blockData.seatsFromRight
+        ) {
+          blockUpdates.push({ id: blockId, data: blockData });
+        }
 
         for (const [ri, row] of block.rows.entries()) {
           const rowData = { blockId, label: row.label.toUpperCase(), order: ri + 1 };
@@ -313,7 +321,9 @@ export async function applyLayout(user: AuthUser, id: string, input: LayoutInput
 
 /** PCs numbered in reading order (block → row → seat), unplaced PCs last. */
 function planRenumber(view: RoomView) {
-  const placedOrder = view.blocks.flatMap((b) => b.rows.flatMap((r) => r.seats.map((s) => s.workstationId).filter(Boolean))) as string[];
+  const placedOrder = view.blocks.flatMap((b) =>
+    b.rows.flatMap((r) => (b.seatsFromRight ? [...r.seats].reverse() : r.seats).map((s) => s.workstationId).filter(Boolean)),
+  ) as string[];
   const unplaced = view.workstations.filter((w) => !w.seatId).map((w) => w.id);
   const order = [...placedOrder, ...unplaced];
   const byId = new Map(view.workstations.map((w) => [w.id, w]));
