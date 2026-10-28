@@ -277,7 +277,6 @@ export async function renderPdf(input: ReportData): Promise<Buffer> {
       creationDate: generated,
       modDate: generated,
     },
-    ...(report.kind === "DRAFT" && { watermark: { text: "DRAFT", opacity: 0.08, bold: true } }),
     header: (page) =>
       page === 1
         ? ""
