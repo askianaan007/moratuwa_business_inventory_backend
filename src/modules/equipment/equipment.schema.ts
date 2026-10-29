@@ -76,6 +76,8 @@ export const linkAssetSchema = z.object({ expectedVersion: version, assetItemId:
 export const unlinkAssetSchema = z.object({ expectedVersion: version });
 
 export const generateQuery = z.object({ dryRun: z.stringbool().default(false) });
+/** Without typeId: every default type. With it: only that type (e.g. UPS). */
+export const generateBody = z.object({ typeId: z.uuid().optional() });
 
 // ─── Types & fault reasons ──────────────────────────────────────────────
 

@@ -322,11 +322,11 @@ export async function history(user: AuthUser, id: string) {
   return { item: brief(item), older: chain.map(brief), newer: newer.map(brief), checks, log };
 }
 
-export async function generate(user: AuthUser, roomId: string, dryRun: boolean) {
+export async function generate(user: AuthUser, roomId: string, dryRun: boolean, typeId?: string) {
   const room = await loadRoomForUser(user, roomId);
   try {
     return await prisma.$transaction(async (tx) => {
-      const result = await generateDefaultEquipment(tx, roomId, room.departmentId);
+      const result = await generateDefaultEquipment(tx, roomId, room.departmentId, typeId);
       if (dryRun) throw new DryRun(result);
       await logActivity(tx, { actorId: user.id, action: "generate_equipment", tableName: "locations", rowId: roomId, after: result });
       return { ...result, dryRun: false };

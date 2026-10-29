@@ -1,4 +1,5 @@
 import type { Prisma } from "../../generated/prisma/client.js";
+import { AppError } from "../../utils/app-error.js";
 import { pad } from "../rooms/room-view.js";
 
 /**
@@ -13,14 +14,16 @@ export const equipmentCode = (prefix: string, number: number) => `${prefix}-${pa
 
 /**
  * Gives every placed workstation in the room one item of each active default
- * type it is missing (MON-07, CPU-07 … numbered after the PC). Codes already
+ * type it is missing (MON-07, CPU-07 … numbered after the PC), or of just
+ * `onlyTypeId` when given (e.g. UPS, which is not a default). Codes already
  * taken in the room are skipped and reported, never overwritten.
  */
-export async function generateDefaultEquipment(tx: Prisma.TransactionClient, locationId: string, departmentId: string) {
+export async function generateDefaultEquipment(tx: Prisma.TransactionClient, locationId: string, departmentId: string, onlyTypeId?: string) {
   const types = await tx.equipmentType.findMany({
-    where: { isActive: true, isDefault: true, scope: { in: ["WORKSTATION", "BOTH"] } },
+    where: { isActive: true, scope: { in: ["WORKSTATION", "BOTH"] }, ...(onlyTypeId ? { id: onlyTypeId } : { isDefault: true }) },
     orderBy: { sortOrder: "asc" },
   });
+  if (onlyTypeId && !types.length) throw AppError.badRequest("That equipment type cannot be added to PCs");
   const workstations = await tx.workstation.findMany({
     where: { locationId, deletedAt: null, seatId: { not: null } },
     orderBy: { number: "asc" },

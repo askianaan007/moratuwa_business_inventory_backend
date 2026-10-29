@@ -7,6 +7,7 @@ import {
   createEquipmentSchema,
   createReasonSchema,
   createTypeSchema,
+  generateBody,
   generateQuery,
   idParams,
   linkAssetSchema,
@@ -45,7 +46,8 @@ async function create(req: Request, res: Response) {
 async function generate(req: Request, res: Response) {
   const { roomId } = roomParams.parse(req.params);
   const { dryRun } = generateQuery.parse(req.query);
-  res.json({ data: await equipment.generate(currentUser(req), roomId, dryRun) });
+  const { typeId } = generateBody.parse(req.body ?? {});
+  res.json({ data: await equipment.generate(currentUser(req), roomId, dryRun, typeId) });
 }
 
 async function update(req: Request, res: Response) {
