@@ -98,6 +98,9 @@ export const moveWorkstationSchema = z.object({
   seatId: z.uuid(),
 });
 
+/** Reset or delete a whole room. */
+export const clearRoomSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+
 export const retireWorkstationSchema = z.object({
   expectedVersion: z.number().int().min(0),
   reason: z.string().trim().min(2).max(500),

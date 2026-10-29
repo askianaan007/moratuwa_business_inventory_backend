@@ -517,3 +517,71 @@ export async function retireWorkstation(
   return get(user, locationId);
 }
 
+
+// ─── Reset & delete ─────────────────────────────────────────────────────
+
+const OPEN_AUDITS = ["DRAFT", "SUBMITTED", "RETURNED"] as const;
+
+/**
+ * Takes the layout, PCs and equipment out of service so the room can be set
+ * up again. Nothing is hard-deleted: rows are soft-deleted or retired the same
+ * way the app does one at a time, so audit history and ledger links keep working.
+ */
+async function clearRoom(tx: Tx, locationId: string, reason: string) {
+  const now = new Date();
+  const equipment = await tx.equipment.updateMany({
+    where: { locationId, state: { not: "RETIRED" } },
+    data: { state: "RETIRED", retiredAt: now, retiredReason: reason, activeCodeKey: null, activeSlotKey: null, activeAssetKey: null, version: { increment: 1 } },
+  });
+  const workstations = await tx.workstation.updateMany({
+    where: { locationId, deletedAt: null },
+    data: { deletedAt: now, activeSeatKey: null, activeNumberKey: null, version: { increment: 1 } },
+  });
+  const seats = await tx.seat.updateMany({ where: { deletedAt: null, row: { block: { locationId } } }, data: { deletedAt: now } });
+  const rows = await tx.roomRow.updateMany({ where: { deletedAt: null, block: { locationId } }, data: { deletedAt: now } });
+  const blocks = await tx.roomBlock.updateMany({ where: { locationId, deletedAt: null }, data: { deletedAt: now } });
+  await tx.location.update({ where: { id: locationId }, data: { layoutVersion: { increment: 1 } } });
+  return { blocks: blocks.count, rows: rows.count, seats: seats.count, workstations: workstations.count, equipment: equipment.count };
+}
+
+async function assertNoOpenAudits(tx: Tx, locationId: string) {
+  const open = await tx.labAudit.findFirst({ where: { locationId, status: { in: [...OPEN_AUDITS] } }, select: { reference: true, status: true } });
+  if (open) throw AppError.conflict(`Audit ${open.reference} is ${open.status.toLowerCase()}. Delete or finish it first.`);
+}
+
+/** Starts the room again from an empty layout. The room itself, its code and its audit history stay. */
+export async function resetRoom(user: AuthUser, id: string, input: { reason: string }) {
+  await prisma.$transaction(
+    async (tx) => {
+      await loadRoomForUser(user, id, tx);
+      await assertNoOpenAudits(tx, id);
+      const cleared = await clearRoom(tx, id, `Room reset: ${input.reason}`);
+      await logActivity(tx, { actorId: user.id, action: "reset", tableName: "locations", rowId: id, after: { reason: input.reason, ...cleared } });
+    },
+    { timeout: 30_000 },
+  );
+  return get(user, id);
+}
+
+/**
+ * Removes the room from the list. Only for rooms with no audits and no ledger
+ * items, so no record is left pointing at it. The code is freed so a new room
+ * can use it.
+ */
+export async function deleteRoom(user: AuthUser, id: string, input: { reason: string }) {
+  await prisma.$transaction(
+    async (tx) => {
+      const room = await loadRoomForUser(user, id, tx);
+      const audits = await tx.labAudit.count({ where: { locationId: id } });
+      if (audits) throw AppError.conflict(`This room has ${audits} audit${audits === 1 ? "" : "s"}. Delete them first, or use Reset to keep the room.`);
+      const items = await tx.assetItem.count({ where: { locationId: id } });
+      if (items) throw AppError.conflict(`${items} ledger item${items === 1 ? " is" : "s are"} recorded in this room. Move them first, or use Reset to keep the room.`);
+      const cleared = await clearRoom(tx, id, `Room deleted: ${input.reason}`);
+      const freedCode = `${room.code}~DELETED-${Date.now().toString(36).toUpperCase()}`;
+      await tx.location.update({ where: { id }, data: { deletedAt: new Date(), code: freedCode } });
+      await logActivity(tx, { actorId: user.id, action: "delete", tableName: "locations", rowId: id, before: room, after: { reason: input.reason, code: freedCode, ...cleared } });
+    },
+    { timeout: 30_000 },
+  );
+  return { id };
+}

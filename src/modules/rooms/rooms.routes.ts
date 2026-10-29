@@ -11,6 +11,7 @@ import {
   retireWorkstationSchema,
   updateRoomSchema,
   updateWorkstationSchema,
+  clearRoomSchema,
 } from "./rooms.schema.js";
 import * as rooms from "./rooms.service.js";
 
@@ -79,11 +80,23 @@ async function retireWorkstation(req: Request, res: Response) {
 
 // ─── Routes ─────────────────────────────────────────────────────────────
 
+async function resetRoom(req: Request, res: Response) {
+  const { id } = idParams.parse(req.params);
+  res.json({ data: await rooms.resetRoom(currentUser(req), id, clearRoomSchema.parse(req.body)) });
+}
+
+async function deleteRoom(req: Request, res: Response) {
+  const { id } = idParams.parse(req.params);
+  res.json({ data: await rooms.deleteRoom(currentUser(req), id, clearRoomSchema.parse(req.body)) });
+}
+
 export const roomsRoutes = Router();
 roomsRoutes.get("/", list);
 roomsRoutes.post("/", configurers, create);
 roomsRoutes.get("/:id", get);
 roomsRoutes.patch("/:id", configurers, update);
+roomsRoutes.post("/:id/reset", configurers, resetRoom);
+roomsRoutes.delete("/:id", configurers, deleteRoom);
 roomsRoutes.post("/:id/layout/preview", configurers, previewLayout);
 roomsRoutes.post("/:id/layout", configurers, applyLayout);
 roomsRoutes.post("/:id/renumber/preview", configurers, previewRenumber);
