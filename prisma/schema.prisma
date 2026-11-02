@@ -769,12 +769,15 @@ model ReportSettings {
 // serial number and brand. Exported as a PDF. Not linked to the ledger.
 
 model SerialList {
-  id           String  @id @default(uuid()) @db.Uuid
-  departmentId String  @map("department_id") @db.Uuid
-  title        String
-  location     String? // free text, e.g. "Lab 02"
-  notes        String?
-  createdById  String? @map("created_by_id") @db.Uuid
+  id                   String  @id @default(uuid()) @db.Uuid
+  departmentId         String  @map("department_id") @db.Uuid
+  title                String
+  location             String? // free text, e.g. "Lab 02"
+  notes                String?
+  /// Printed on the PDF's "Checked by" signature line.
+  checkedByName        String? @map("checked_by_name")
+  checkedByDesignation String? @map("checked_by_designation")
+  createdById          String? @map("created_by_id") @db.Uuid
 
   department Department   @relation(fields: [departmentId], references: [id])
   createdBy  User?        @relation(fields: [createdById], references: [id])

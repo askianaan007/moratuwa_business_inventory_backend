@@ -110,7 +110,7 @@ export async function renderSerialListPdf(input: SerialReportData): Promise<Buff
         {
           columns: [
             signature("Prepared by", preparedBy, null, fmtDate(generatedAt)),
-            signature(settings.checkedByLabel, null, null, null),
+            signature(settings.checkedByLabel, list.checkedByName, list.checkedByDesignation, null),
             signature(settings.hodDesignation, settings.hodName, settings.hodDesignation, null),
           ],
           columnGap: 16,

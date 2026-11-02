@@ -19,6 +19,8 @@ export const createListSchema = z.object({
   title: z.string().trim().min(2, "Give the list a name").max(120),
   location: optional(120),
   notes: optional(1000),
+  checkedByName: optional(120),
+  checkedByDesignation: optional(120),
 });
 
 export const updateListSchema = createListSchema.omit({ departmentId: true }).partial();
