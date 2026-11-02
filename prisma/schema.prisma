@@ -86,6 +86,7 @@ model Department {
   equipment      Equipment[]
   labAudits      LabAudit[]
   reportSettings ReportSettings?
+  serialLists    SerialList[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -148,6 +149,7 @@ model User {
   labChecks      LabAuditCheck[]      @relation("LabCheckCheckedBy")
   labTransitions LabAuditTransition[]
   labSnapshots   LabAuditSnapshot[]
+  serialLists    SerialList[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -459,13 +461,13 @@ enum CheckTargetKind {
 
 /// A column of desks seen from the top, e.g. "A — Window side".
 model RoomBlock {
-  id         String    @id @default(uuid()) @db.Uuid
-  locationId String    @map("location_id") @db.Uuid
-  code       String // short code used in position codes: A-R3-S2
-  name       String
-  order      Int
-  seatsFromRight Boolean @default(false) @map("seats_from_right") // S1 is the right-most seat
-  deletedAt  DateTime? @map("deleted_at")
+  id             String    @id @default(uuid()) @db.Uuid
+  locationId     String    @map("location_id") @db.Uuid
+  code           String // short code used in position codes: A-R3-S2
+  name           String
+  order          Int
+  seatsFromRight Boolean   @default(false) @map("seats_from_right") // S1 is the right-most seat
+  deletedAt      DateTime? @map("deleted_at")
 
   location Location  @relation(fields: [locationId], references: [id])
   rows     RoomRow[]
@@ -759,4 +761,64 @@ model ReportSettings {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("report_settings")
+}
+
+// ─── Serial number capture ──────────────────────────────────────────────
+// Standalone lists filled in with a barcode reader: each unit (e.g. a PC set)
+// has one product number, and each of its parts (monitor, CPU …) its own
+// serial number and brand. Exported as a PDF. Not linked to the ledger.
+
+model SerialList {
+  id           String  @id @default(uuid()) @db.Uuid
+  departmentId String  @map("department_id") @db.Uuid
+  title        String
+  location     String? // free text, e.g. "Lab 02"
+  notes        String?
+  createdById  String? @map("created_by_id") @db.Uuid
+
+  department Department   @relation(fields: [departmentId], references: [id])
+  createdBy  User?        @relation(fields: [createdById], references: [id])
+  units      SerialUnit[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([departmentId, deletedAt])
+  @@map("serial_lists")
+}
+
+/// One product with a single product number, e.g. a PC set.
+model SerialUnit {
+  id            String  @id @default(uuid()) @db.Uuid
+  listId        String  @map("list_id") @db.Uuid
+  productNumber String  @map("product_number")
+  label         String? // e.g. "PC 01"
+  sortOrder     Int     @map("sort_order")
+
+  list       SerialList        @relation(fields: [listId], references: [id], onDelete: Cascade)
+  components SerialComponent[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([listId, sortOrder])
+  @@map("serial_units")
+}
+
+/// A part of a unit (Monitor, CPU …) with its own serial number and brand.
+model SerialComponent {
+  id        String  @id @default(uuid()) @db.Uuid
+  unitId    String  @map("unit_id") @db.Uuid
+  kind      String // Monitor, CPU, Keyboard …
+  serialNo  String  @map("serial_no")
+  brand     String?
+  model     String?
+  sortOrder Int     @map("sort_order")
+
+  unit SerialUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([unitId, sortOrder])
+  @@index([serialNo])
+  @@map("serial_components")
 }

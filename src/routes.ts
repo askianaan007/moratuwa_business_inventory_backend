@@ -11,6 +11,7 @@ import { ledgerRoutes } from "./modules/ledger/ledger.routes.js";
 import { organisationRoutes } from "./modules/organisation/organisation.routes.js";
 import { reportSettingsRoutes } from "./modules/reports/report-settings.routes.js";
 import { roomsRoutes, workstationsRoutes } from "./modules/rooms/rooms.routes.js";
+import { serialListsRoutes } from "./modules/serial-lists/serial-lists.routes.js";
 import { usersRoutes } from "./modules/users/users.routes.js";
 
 export const apiRoutes = Router();
@@ -37,4 +38,5 @@ apiRoutes.use("/equipment-types", equipmentTypesRoutes);
 apiRoutes.use("/fault-reasons", faultReasonsRoutes);
 apiRoutes.use("/lab-audits", labAuditsRoutes);
 apiRoutes.use("/report-settings", reportSettingsRoutes);
+apiRoutes.use("/serial-lists", serialListsRoutes);
 apiRoutes.use("/", organisationRoutes); // /departments, /locations
