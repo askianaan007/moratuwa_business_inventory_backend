@@ -39,6 +39,8 @@ export function createApp() {
     }),
   );
   app.use(corsMiddleware);
+  // Label photos are larger than any other request; everything else keeps the small limit.
+  app.use("/api/v1/label-reader", express.json({ limit: "2mb" }));
   app.use(express.json({ limit: "200kb" }));
   app.use(cookieParser());
   app.use("/api", apiLimiter);

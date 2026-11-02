@@ -7,6 +7,7 @@ import { dashboardRoutes } from "./modules/dashboard/dashboard.routes.js";
 import { equipmentRoutes, equipmentTypesRoutes, faultReasonsRoutes, roomEquipmentRoutes } from "./modules/equipment/equipment.routes.js";
 import { itemsRoutes } from "./modules/items/items.routes.js";
 import { labAuditsRoutes } from "./modules/lab-audits/lab-audits.routes.js";
+import { labelReaderRoutes } from "./modules/label-reader/label-reader.routes.js";
 import { ledgerRoutes } from "./modules/ledger/ledger.routes.js";
 import { organisationRoutes } from "./modules/organisation/organisation.routes.js";
 import { reportSettingsRoutes } from "./modules/reports/report-settings.routes.js";
@@ -39,4 +40,5 @@ apiRoutes.use("/fault-reasons", faultReasonsRoutes);
 apiRoutes.use("/lab-audits", labAuditsRoutes);
 apiRoutes.use("/report-settings", reportSettingsRoutes);
 apiRoutes.use("/serial-lists", serialListsRoutes);
+apiRoutes.use("/label-reader", labelReaderRoutes);
 apiRoutes.use("/", organisationRoutes); // /departments, /locations

@@ -32,6 +32,13 @@ const envSchema = z.object({
     .regex(/^[A-Z0-9]{2,10}$/)
     .default("UOM"),
 
+  /**
+   * Optional: reading equipment labels from photos with Google Gemini (free
+   * tier). Without a key the app falls back to on-device text reading.
+   */
+  GEMINI_API_KEY: z.string().trim().optional().transform((v) => v || undefined),
+  GEMINI_MODEL: z.string().trim().min(1).default("gemini-3.5-flash-lite"),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
 });
 
