@@ -4,6 +4,16 @@ import type { SerialReportData } from "./serial-lists.service.js";
 
 /** A4 in points, 15 mm side/top margins, 18 mm bottom (footer). */
 const MARGINS: [number, number, number, number] = [43, 50, 43, 51];
+const PORTRAIT_WIDTH = 595.28 - MARGINS[0] - MARGINS[2];
+const LANDSCAPE_WIDTH = 841.89 - MARGINS[0] - MARGINS[2];
+const FONT_SIZE = 8.5;
+
+/** Rough printed width of a Roboto string (plus a little slack): enough to size columns to their content. */
+const textWidth = (text: string, bold = false) => text.length * FONT_SIZE * (bold ? 0.64 : 0.56) + 3;
+/** pdfmake widths exclude each cell's left/right padding (4 + 4) and its border line. */
+const CELL_EXTRA = 8.5;
+const fit = (values: string[], { min, max, bold = false }: { min: number; max: number; bold?: boolean }) =>
+  Math.min(max, Math.max(min, ...values.map((v) => textWidth(v, bold))));
 
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Colombo" });
@@ -20,10 +30,13 @@ const tableLayout = {
   paddingBottom: () => 3,
 };
 
-/** Part / Brand / Model / Serial number columns inside each unit row. */
-const PART_WIDTHS = [55, 60, 75, "*"];
+/** Layout for the two-row register header: heavier lines around it. */
+const registerLayout = {
+  ...tableLayout,
+  hLineWidth: (i: number) => (i === 0 || i === 2 ? 1 : 0.5),
+};
 
-const th = (text: string): TableCell => ({ text, bold: true, fillColor: "#e6e6e6" });
+const th = (text: string) => ({ text, bold: true, fillColor: "#e6e6e6" });
 const heading = (text: string): Content => ({ text, style: "h2", margin: [0, 10, 0, 5] });
 
 export async function renderSerialListPdf(input: SerialReportData): Promise<Buffer> {
@@ -31,25 +44,7 @@ export async function renderSerialListPdf(input: SerialReportData): Promise<Buff
   const { list, settings, preparedBy, generatedAt } = structuredClone(input);
   const partCount = list.units.reduce((n, u) => n + u.components.length, 0);
 
-  // One row per unit, its parts in a nested table, so a set never splits across pages.
-  const partsTable = (rows: TableCell[][], header = false): TableCell => ({
-    table: { widths: PART_WIDTHS, body: rows },
-    layout: {
-      ...tableLayout,
-      hLineWidth: (i: number, node: { table: { body: unknown[] } }) => (i === 0 || i === node.table.body.length ? 0 : 0.5),
-      vLineWidth: (i: number) => (i === 0 || i === PART_WIDTHS.length ? 0 : 0.5),
-      hLineColor: () => (header ? "#555" : "#bbb"),
-    },
-    margin: [-4, -3, -4, -3],
-  });
-  const registerBody: TableCell[][] = list.units.map((unit, i) => [
-    String(i + 1),
-    unit.label ?? "—",
-    { text: unit.productNumber, bold: true },
-    partsTable(unit.components.map((c) => [c.kind, c.brand ?? "—", c.model ?? "—", { text: c.serialNo, bold: true }])),
-  ]);
-  const registerHeader: TableCell[] = [th("No"), th("Label"), th("Product number"), partsTable([["Part", "Brand", "Model", "Serial number"].map(th)], true)];
-
+  const register = registerTable(list.units);
   // Count of parts by type and brand.
   const byKind = new Map<string, Map<string, number>>();
   for (const c of list.units.flatMap((u) => u.components)) {
@@ -98,14 +93,7 @@ export async function renderSerialListPdf(input: SerialReportData): Promise<Buff
     },
     list.notes ? { text: list.notes, fontSize: 9, margin: [0, 2, 0, 4] } : "",
     heading("1. Register"),
-    registerBody.length
-      ? {
-          table: { headerRows: 1, dontBreakRows: true, widths: [18, 50, 90, "*"], body: [registerHeader, ...registerBody] },
-          layout: tableLayout,
-          fontSize: 8.5,
-          margin: [0, 0, 0, 10],
-        }
-      : { text: "No units recorded.", italics: true, color: "#555" },
+    list.units.length ? register.content : { text: "No units recorded.", italics: true, color: "#555" },
     {
       unbreakable: true,
       stack: [
@@ -136,6 +124,7 @@ export async function renderSerialListPdf(input: SerialReportData): Promise<Buff
   const generated = new Date(generatedAt);
   const doc: TDocumentDefinitions = {
     pageSize: "A4",
+    pageOrientation: register.landscape ? "landscape" : "portrait",
     pageMargins: MARGINS,
     info: {
       title: `${list.title} — Serial Number Register`,
@@ -165,4 +154,125 @@ export async function renderSerialListPdf(input: SerialReportData): Promise<Buff
   };
 
   return pdfmake.createPdf(doc).getBuffer();
+}
+
+type Unit = SerialReportData["list"]["units"][number];
+
+const brandModel = (c: { brand: string | null; model: string | null }) => [c.brand, c.model].filter(Boolean).join(" ") || "—";
+
+/**
+ * The register, one row per unit. Usually every unit has the same parts (a
+ * monitor and a CPU), so each part type gets its own column group: serial,
+ * brand / model and, when any is recorded, product code. Columns are sized to
+ * their content, and the page turns landscape only when they do not fit
+ * portrait. Lists that do not fit that shape (a unit with two parts of the same
+ * type, or many part types) list each unit's parts in a nested table instead.
+ */
+function registerTable(units: Unit[]): { content: Content; landscape: boolean } {
+  const kinds = [...new Set(units.flatMap((u) => u.components.map((c) => c.kind)))];
+  const oneOfEach = units.every((u) => new Set(u.components.map((c) => c.kind)).size === u.components.length);
+
+  const fixedWidths = [
+    16,
+    fit(units.map((u) => u.label ?? "—"), { min: 34, max: 60 }),
+    fit(units.map((u) => u.productNumber), { min: 56, max: 110, bold: true }),
+  ];
+  const fixedHeader = (row: 0 | 1): TableCell[] =>
+    row === 0 ? [{ ...th("No"), rowSpan: 2 } as TableCell, { ...th("Label"), rowSpan: 2 } as TableCell, { ...th("Product number"), rowSpan: 2 } as TableCell] : [{}, {}, {}] as TableCell[];
+  const fixedCells = (u: Unit, i: number, fill?: string): TableCell[] => [
+    { text: String(i + 1), fillColor: fill },
+    { text: u.label ?? "—", fillColor: fill },
+    { text: u.productNumber, bold: true, fillColor: fill },
+  ];
+  const shade = (i: number) => (i % 2 ? "#f5f5f5" : undefined);
+
+  if (oneOfEach && kinds.length <= 4) {
+    const groups = kinds.map((kind) => {
+      const parts = units.map((u) => u.components.find((c) => c.kind === kind));
+      const present = parts.filter((c): c is NonNullable<typeof c> => Boolean(c));
+      const withCode = present.some((c) => c.productCode);
+      return {
+        kind,
+        parts,
+        withCode,
+        widths: [
+          fit(present.map((c) => c.serialNo), { min: 60, max: 170, bold: true }),
+          fit(present.map(brandModel), { min: 55, max: 120 }),
+          ...(withCode ? [fit(present.map((c) => c.productCode ?? ""), { min: 55, max: 110 })] : []),
+        ],
+      };
+    });
+
+    const natural = [...fixedWidths, ...groups.flatMap((g) => g.widths)];
+    const total = natural.reduce((a, b) => a + b, 0);
+    const room = (page: number) => page - natural.length * CELL_EXTRA - 1;
+    if (total <= room(LANDSCAPE_WIDTH)) {
+      const landscape = total > room(PORTRAIT_WIDTH);
+      // Share the spare width out proportionally, so the table spans the page.
+      const scale = room(landscape ? LANDSCAPE_WIDTH : PORTRAIT_WIDTH) / total;
+      const widths = natural.map((w) => Math.floor(w * scale * 10) / 10);
+
+      const header0: TableCell[] = [
+        ...fixedHeader(0),
+        ...groups.flatMap((g) => [{ ...th(g.kind), colSpan: g.widths.length, alignment: "center" } as TableCell, ...Array<TableCell>(g.widths.length - 1).fill({})]),
+      ];
+      const header1: TableCell[] = [
+        ...fixedHeader(1),
+        ...groups.flatMap((g) => [th("Serial number"), th("Brand / model"), ...(g.withCode ? [th("Product code")] : [])]),
+      ];
+      const body: TableCell[][] = units.map((u, i) => [
+        ...fixedCells(u, i, shade(i)),
+        ...groups.flatMap((g): TableCell[] => {
+          const c = g.parts[i];
+          return [
+            { text: c?.serialNo ?? "—", bold: Boolean(c), fillColor: shade(i) },
+            { text: c ? brandModel(c) : "—", fillColor: shade(i) },
+            ...(g.withCode ? [{ text: c?.productCode ?? "—", fillColor: shade(i) }] : []),
+          ];
+        }),
+      ]);
+
+      return {
+        landscape,
+        content: {
+          table: { headerRows: 2, dontBreakRows: true, widths, body: [header0, header1, ...body] },
+          layout: registerLayout,
+          fontSize: FONT_SIZE,
+          margin: [0, 0, 0, 10],
+        },
+      };
+    }
+  }
+
+  // Fallback: each unit's parts in a nested table, so a set never splits across pages.
+  const withCode = units.some((u) => u.components.some((c) => c.productCode));
+  const partWidths = [50, 70, ...(withCode ? [70] : []), "*"];
+  const partsTable = (rows: TableCell[][], header = false): TableCell => ({
+    table: { widths: partWidths, body: rows },
+    layout: {
+      ...tableLayout,
+      hLineWidth: (i: number, node: { table: { body: unknown[] } }) => (i === 0 || i === node.table.body.length ? 0 : 0.5),
+      vLineWidth: (i: number) => (i === 0 || i === partWidths.length ? 0 : 0.5),
+      hLineColor: () => (header ? "#555" : "#bbb"),
+    },
+    margin: [-4, -3, -4, -3],
+  });
+  const row = (c: Unit["components"][number]): TableCell[] => [c.kind, brandModel(c), ...(withCode ? [c.productCode ?? "—"] : []), { text: c.serialNo, bold: true }];
+  return {
+    landscape: true,
+    content: {
+      table: {
+        headerRows: 1,
+        dontBreakRows: true,
+        widths: [16, fixedWidths[1]!, fixedWidths[2]!, "*"],
+        body: [
+          [th("No"), th("Label"), th("Product number"), partsTable([["Part", "Brand / model", ...(withCode ? ["Product code"] : []), "Serial number"].map(th)], true)],
+          ...units.map((u, i): TableCell[] => [String(i + 1), u.label ?? "—", { text: u.productNumber, bold: true }, partsTable(u.components.map(row))]),
+        ],
+      },
+      layout: tableLayout,
+      fontSize: FONT_SIZE,
+      margin: [0, 0, 0, 10],
+    },
+  };
 }

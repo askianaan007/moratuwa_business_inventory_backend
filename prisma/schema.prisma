@@ -808,13 +808,15 @@ model SerialUnit {
 
 /// A part of a unit (Monitor, CPU …) with its own serial number and brand.
 model SerialComponent {
-  id        String  @id @default(uuid()) @db.Uuid
-  unitId    String  @map("unit_id") @db.Uuid
-  kind      String // Monitor, CPU, Keyboard …
-  serialNo  String  @map("serial_no")
-  brand     String?
-  model     String?
-  sortOrder Int     @map("sort_order")
+  id          String  @id @default(uuid()) @db.Uuid
+  unitId      String  @map("unit_id") @db.Uuid
+  kind        String // Monitor, CPU, Keyboard …
+  serialNo    String  @map("serial_no")
+  brand       String?
+  model       String?
+  /// Optional own product code, e.g. a CPU's; the unit's product number (from the monitor) identifies the set.
+  productCode String? @map("product_code")
+  sortOrder   Int     @map("sort_order")
 
   unit SerialUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
 

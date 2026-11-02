@@ -28,6 +28,7 @@ const componentSchema = z.object({
   serialNo: scanned("Serial number"),
   brand: optional(80),
   model: optional(80),
+  productCode: optional(120),
 });
 
 export const unitSchema = z

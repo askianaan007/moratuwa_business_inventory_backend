@@ -45,7 +45,7 @@ async function assertNoDuplicates(tx: Tx, listId: string, input: UnitInput, exce
 }
 
 const componentRows = (input: UnitInput) =>
-  input.components.map((c, i) => ({ kind: c.kind, serialNo: c.serialNo, brand: c.brand, model: c.model, sortOrder: i }));
+  input.components.map((c, i) => ({ kind: c.kind, serialNo: c.serialNo, brand: c.brand, model: c.model, productCode: c.productCode, sortOrder: i }));
 
 // ─── Lists ──────────────────────────────────────────────────────────────
 
