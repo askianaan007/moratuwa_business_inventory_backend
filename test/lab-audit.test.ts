@@ -175,8 +175,8 @@ describe.skipIf(!enabled)("lab rooms & monthly audit (API)", async () => {
     expect(res.status).toBe(201);
     auditId = res.body.data.id;
     const checks = res.body.data.checks;
-    // 30 PCs × 5 parts + 1 extra monitor + 2 room items + 1 empty table
-    expect(checks).toHaveLength(30 * 5 + 1 + 2 + 1);
+    // 30 PCs × 4 default parts (UPS is optional) + 1 extra monitor + 2 room items + 1 empty table
+    expect(checks).toHaveLength(30 * 4 + 1 + 2 + 1);
     expect(new Set(checks.map((c: any) => c.targetKey)).size).toBe(checks.length);
     expect(checks.every((c: any) => c.status === "NOT_CHECKED")).toBe(true);
 

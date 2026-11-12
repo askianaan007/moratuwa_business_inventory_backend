@@ -26,6 +26,9 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL_MIN: z.coerce.number().int().min(1).max(60).default(15),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
 
+  /** Public web app address, encoded in printed QR labels. Defaults to the first CORS origin. */
+  APP_URL: z.url().optional(),
+
   /** Prefix for printed asset tags, e.g. UOM-ELEC-2026-00001. */
   TAG_PREFIX: z
     .string()
